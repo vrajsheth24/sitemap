@@ -9,6 +9,7 @@ import XmlStudioTab from './components/Tabs/XmlStudioTab';
 import ValidatorTab from './components/Tabs/ValidatorTab';
 import PageModal from './components/PageModal';
 import Toast from './components/Toast';
+import ProgressBar from './components/ProgressBar';
 
 import { runSeoAudit } from './utils/seoAuditor';
 import { ClientCrawler } from './utils/clientCrawler';
@@ -24,11 +25,26 @@ export default function App() {
   const [toasts, setToasts] = useState([]);
   const [isDark, setIsDark] = useState(true);
 
+  const [crawlProgress, setCrawlProgress] = useState({
+    current: 0,
+    total: 100,
+    percent: 0,
+    currentUrl: '',
+    status: 'idle'
+  });
+
   const [crawlConfig, setCrawlConfig] = useState({
-    maxPages: 20,
-    maxDepth: 3,
-    useCorsProxy: true,
-    includeImages: true
+    maxPages: 100,
+    maxDepth: 4,
+    concurrency: 4,
+    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    respectRobots: true,
+    includeImages: true,
+    includeSubdomains: false,
+    filterNoindex: true,
+    excludePatterns: '',
+    includePatterns: '',
+    useCorsProxy: true
   });
 
   const crawlerRef = useRef(null);
@@ -72,17 +88,42 @@ export default function App() {
 
     setIsCrawling(true);
     setPages([]); // reset current pages for fresh crawl
+    setCrawlProgress({
+      current: 0,
+      total: crawlConfig.maxPages,
+      percent: 0,
+      currentUrl: targetUrl,
+      status: 'crawling'
+    });
 
     const crawler = new ClientCrawler({
       url: targetUrl,
       maxPages: crawlConfig.maxPages,
       maxDepth: crawlConfig.maxDepth,
+      concurrency: crawlConfig.concurrency,
+      userAgent: crawlConfig.userAgent,
+      respectRobots: crawlConfig.respectRobots,
+      includeImages: crawlConfig.includeImages,
+      includeSubdomains: crawlConfig.includeSubdomains,
+      filterNoindex: crawlConfig.filterNoindex,
+      excludePatterns: crawlConfig.excludePatterns,
+      includePatterns: crawlConfig.includePatterns,
       useCorsProxy: crawlConfig.useCorsProxy,
       onPage: (newPage) => {
         setPages(prev => {
           // Avoid duplicate URLs
           if (prev.some(p => p.url === newPage.url)) return prev;
           return [...prev, newPage];
+        });
+      },
+      onProgress: (prog) => {
+        const percent = Math.min(100, Math.round((prog.current / (prog.total || crawlConfig.maxPages)) * 100));
+        setCrawlProgress({
+          current: prog.current,
+          total: prog.total || crawlConfig.maxPages,
+          percent,
+          currentUrl: prog.url || '',
+          status: 'crawling'
         });
       },
       onLog: (msg, type) => {
@@ -93,6 +134,12 @@ export default function App() {
       },
       onComplete: (discovered) => {
         setIsCrawling(false);
+        setCrawlProgress(prev => ({
+          ...prev,
+          current: discovered.length,
+          percent: 100,
+          status: 'completed'
+        }));
         addToast(`Crawl finished! Discovered ${discovered.length} total pages.`, 'success');
       }
     });
@@ -105,6 +152,7 @@ export default function App() {
     if (crawlerRef.current) {
       crawlerRef.current.abort();
       setIsCrawling(false);
+      setCrawlProgress(prev => ({ ...prev, status: 'completed' }));
       addToast('Crawl stopped by user.', 'warn');
     }
   };
@@ -112,6 +160,13 @@ export default function App() {
   const handleImportPages = (newPages) => {
     if (isCrawling) handleStopCrawl();
     setPages(newPages);
+    setCrawlProgress({
+      current: newPages.length,
+      total: newPages.length,
+      percent: 100,
+      currentUrl: newPages[0]?.url || '',
+      status: 'completed'
+    });
     if (newPages[0]?.url) {
       try {
         const u = new URL(newPages[0].url);
@@ -137,6 +192,7 @@ export default function App() {
   const handleClearAll = () => {
     if (isCrawling) handleStopCrawl();
     setPages([]);
+    setCrawlProgress({ current: 0, total: 100, percent: 0, currentUrl: '', status: 'idle' });
     addToast('Cleared all pages.', 'info');
   };
 
@@ -184,6 +240,12 @@ export default function App() {
           crawlConfig={crawlConfig}
           setCrawlConfig={setCrawlConfig}
           addToast={addToast}
+        />
+
+        {/* Live Crawl Progress Bar */}
+        <ProgressBar
+          progress={crawlProgress}
+          isCrawling={isCrawling}
         />
 
         {/* Real-time Stat Cards */}
