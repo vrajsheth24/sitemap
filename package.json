@@ -1,17 +1,24 @@
 {
   "name": "sitemap",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "Visual sitemap generator and SEO crawler",
+  "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node --check server.js && node --check crawler.js && node --check sitemapGenerator.js && node --check public/js/app.js"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "keywords": [
+    "sitemap",
+    "seo",
+    "crawler",
+    "web",
+    "audit"
+  ],
+  "author": "vrajsheth24",
+  "license": "MIT",
   "type": "commonjs",
+  "private": true,
   "dependencies": {
     "axios": "^1.19.0",
     "cheerio": "^1.2.0",
