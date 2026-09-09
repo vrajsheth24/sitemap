@@ -1,63 +1,102 @@
-# SitemapFlow - Modern Visual Sitemap Generator & Website Crawler
+# SitemapFlow Pro - Modern Visual Sitemap Generator & SEO Intelligence Tool
 
-A state-of-the-art, full-featured web application that crawls any website, analyzes SEO health, visualizes directory structures in an interactive tree view, and generates standard-compliant `sitemap.xml` files.
+A dynamic, state-of-the-art **React single-page application** for generating compliant `sitemap.xml` files, exploring interactive directory hierarchies, auditing SEO health, and validating XML structures. 
+
+Built with **100% client-side architecture (zero backend required)** and optimized for instant deployment to **GitHub Pages**.
 
 ---
 
 ## 🌟 Key Features
 
-1. **High-Performance Web Crawler**:
-   - Depth-limited concurrent crawler with breadth-first queue.
-   - Respects `robots.txt` directives (allow/disallow & crawl-delay).
-   - Extracts SEO metadata: `<title>`, `<meta description>`, `<h1>`, `<link rel="canonical">`, `<meta name="robots">`, HTTP status codes, response times, and page sizes.
-   - Extracts images with `src`, `alt`, and `title` for `<image:image>` sitemap extensions.
-   - Subdomain and URL regex inclusion/exclusion filters.
+1. **Zero-Backend Client-Side Engine**:
+   - Runs entirely in the browser with zero server maintenance, databases, or API keys.
+   - Dual-mode URL discovery: direct browser fetch with optional CORS proxy fallback.
+   - 1-click interactive demo datasets for E-Commerce, SaaS, and Tech Blogs.
+   - Universal importer for existing `sitemap.xml`, CSV, TXT, and JSON files.
 
-2. **Google-Compliant `sitemap.xml` Generator**:
-   - Generates compliant XML (`http://www.sitemaps.org/schemas/sitemap/0.9`).
-   - Supports Google Image Sitemap extensions (`http://www.google.com/schemas/sitemap-image/1.1`).
-   - Smart priority & change frequency calculator based on page depth.
-   - Exports in multiple formats: **XML**, **CSV** (SEO audit report), **TXT** (clean URL list), and **JSON**.
+2. **Interactive Visual Directory Tree**:
+   - Converts flat URL lists into collapsible nested directory hierarchies.
+   - Node depth badges, status code indicators, and item count tallies.
+   - 1-click inspection modal for any node or branch.
 
-3. **Real-Time Live Dashboard & Terminal**:
-   - Server-Sent Events (SSE) live streaming of discovered URLs, crawl progress, and queue size.
-   - Live speedometer, status code counters (2xx/3xx/4xx/5xx), and error flags.
-   - Live syntax-highlighted XML preview with one-click copy.
-   - Live stdout terminal feed with color-coded logs.
+3. **Real-Time SEO Health & Audit Suite**:
+   - Automated SEO Health Index score (0-100) with dynamic circular SVG gauge.
+   - Flags critical broken links (4xx/5xx errors), missing title tags, short/long meta descriptions, and missing `<h1>` headings.
+   - Latency and Core Web Vitals response time metrics.
 
-4. **Interactive Visual Site Hierarchy Tree**:
-   - Automatically builds a nested directory tree showing how pages link together.
-   - Collapsible/expandable folder nodes with page count badges.
-   - One-click page inspection modal with full SEO metrics.
+4. **Live XML Studio & Multi-Format Exporter**:
+   - Real-time syntax-highlighted `sitemap.xml` with Google Image Sitemap extensions.
+   - Export to **XML**, **robots.txt**, **URLs (TXT)**, **SEO Audit (CSV)**, and **JSON**.
+   - One-click copy to clipboard with toast notifications and confetti celebrations.
 
-5. **SEO Health & Broken Link Audit**:
-   - Automatically flags 4xx/5xx broken links, missing title tags, missing meta descriptions, slow response times (> 1.5s), and noindex tags.
-   - Provides an aggregate 0-100 SEO health index.
-
-6. **Sitemap Validator & Search Engine Submission Guide**:
-   - Validate any pasted XML content or fetch external live sitemaps.
-   - Direct step-by-step submission guides for Google Search Console and Bing Webmaster Tools.
+5. **XML Conformance Validator & Search Engine Submission Guide**:
+   - Live conformance validator checking against `sitemaps.org 0.9` standards, maximum 50,000 URLs limit, and 50MB size rules.
+   - Step-by-step submission checklists for **Google Search Console** and **Bing Webmaster Tools**.
 
 ---
 
-## 🚀 Quick Start
+## 🚀 Quick Start (Local Development)
 
 ### 1. Install Dependencies
 ```bash
 npm install
 ```
 
-### 2. Start the Application
+### 2. Start Local Development Server
 ```bash
-npm start
+npm run dev
 ```
-The server will start on `http://localhost:3000`.
 
-### 3. Open in Browser
-Visit [http://localhost:3000](http://localhost:3000) in your web browser.
+Open [http://localhost:5173](http://localhost:5173) in your browser.
+
+### 3. Build for Production
+```bash
+npm run build
+```
+
+---
+
+## 🌐 Deploy to GitHub Pages
+
+This repository includes a ready-to-use **GitHub Actions workflow** located at `.github/workflows/deploy.yml` that automatically builds and deploys the site on every push to the `main` branch.
+
+### How to Enable GitHub Pages:
+
+1. **Push your code to GitHub**:
+   ```bash
+   git add .
+   git commit -m "Deploy SitemapFlow Pro React application"
+   git push origin main
+   ```
+
+2. **Enable GitHub Pages in your repository settings**:
+   - Open your repository on GitHub: `https://github.com/vrajsheth24/sitemap`
+   - Click **Settings** (top tab)
+   - In the left sidebar, click **Pages**
+   - Under **Build and deployment > Source**, select:
+     👉 **GitHub Actions**
+   
+3. **That's it!** GitHub Actions will automatically run the build and publish your site at:
+   👉 **`https://vrajsheth24.github.io/sitemap/`**
+
+### Alternative 1-Command Deployment (Manual):
+You can also deploy manually at any time using the `gh-pages` script:
+```bash
+npm run deploy
+```
 
 ---
 
 ## 🛠️ Tech Stack
-- **Backend**: Node.js, Express, Axios, Cheerio, robots-parser, xmlbuilder2
-- **Frontend**: HTML5, Vanilla CSS (Glassmorphic dark design system), Vanilla JavaScript (SSE streaming, dynamic DOM), Lucide Icons
+
+- **Framework**: React 19 + Vite
+- **Icons**: Lucide React
+- **Animations**: Canvas Confetti & Glassmorphic CSS Design System
+- **Hosting**: GitHub Pages (Static / Serverless)
+- **CI/CD**: GitHub Actions (`deploy.yml`)
+
+---
+
+## 📄 License
+
+MIT © vrajsheth24
