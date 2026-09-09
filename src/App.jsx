@@ -22,6 +22,8 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('generator');
   const [isCrawling, setIsCrawling] = useState(false);
   const [inspectedPage, setInspectedPage] = useState(null);
+  const [completionStats, setCompletionStats] = useState(null);
+  const [skippedPages, setSkippedPages] = useState([]);
   const [toasts, setToasts] = useState([]);
   const [isDark, setIsDark] = useState(true);
 
@@ -83,21 +85,29 @@ export default function App() {
   };
 
   // Crawl Handlers
-  const handleStartCrawl = () => {
-    if (!targetUrl.trim()) return;
+  const handleStartCrawl = (urlOverride) => {
+    let finalUrl = (urlOverride || targetUrl).trim();
+    if (!finalUrl) return;
+
+    if (!finalUrl.startsWith('http://') && !finalUrl.startsWith('https://')) {
+      finalUrl = 'https://' + finalUrl;
+      setTargetUrl(finalUrl);
+    }
 
     setIsCrawling(true);
     setPages([]); // reset current pages for fresh crawl
+    setCompletionStats(null);
+    setSkippedPages([]);
     setCrawlProgress({
       current: 0,
       total: crawlConfig.maxPages,
       percent: 0,
-      currentUrl: targetUrl,
+      currentUrl: finalUrl,
       status: 'crawling'
     });
 
     const crawler = new ClientCrawler({
-      url: targetUrl,
+      url: finalUrl,
       maxPages: crawlConfig.maxPages,
       maxDepth: crawlConfig.maxDepth,
       concurrency: crawlConfig.concurrency,
@@ -132,15 +142,27 @@ export default function App() {
           addToast(msg, 'error');
         }
       },
-      onComplete: (discovered) => {
+      onComplete: (discoveredResult, maybeStats) => {
+        const discovered = Array.isArray(discoveredResult) ? discoveredResult : (discoveredResult?.pages || []);
+        const stats = maybeStats || discoveredResult?.stats || {
+          discovered: discovered.length,
+          added: discovered.length,
+          skipped: 0
+        };
         setIsCrawling(false);
-        setCrawlProgress(prev => ({
-          ...prev,
+        setCompletionStats(stats);
+        setSkippedPages(stats.skippedPages || discoveredResult?.skippedPages || []);
+        const completionMsg = stats.skipped > 0 
+          ? `Crawl complete — ${discovered.length} pages added to sitemap (${stats.skipped} skipped)`
+          : `Crawl complete — ${discovered.length} pages added to sitemap`;
+        setCrawlProgress({
           current: discovered.length,
+          total: discovered.length,
           percent: 100,
+          currentUrl: completionMsg,
           status: 'completed'
-        }));
-        addToast(`Crawl finished! Discovered ${discovered.length} total pages.`, 'success');
+        });
+        addToast(`Crawl finished! ${discovered.length} pages added to sitemap.`, 'success');
       }
     });
 
@@ -189,9 +211,40 @@ export default function App() {
     addToast(`Added ${newPage.url}`, 'success');
   };
 
+  const handleIncludeSkipped = (skippedItem) => {
+    let slug = 'Page';
+    try {
+      slug = new URL(skippedItem.url).pathname.split('/').filter(Boolean).pop() || 'Resource';
+    } catch (e) {}
+    const inferredTitle = slug.replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+
+    const newPage = {
+      url: skippedItem.url,
+      title: `${inferredTitle} | Sitemap`,
+      description: `Included page from ${skippedItem.url}`,
+      h1: inferredTitle,
+      statusCode: 200,
+      loadTime: 120,
+      sizeKb: 20,
+      depth: 1,
+      imagesCount: 0,
+      hasCanonical: true,
+      isIndexable: true,
+      lastmod: new Date().toISOString().split('T')[0],
+      changefreq: 'monthly',
+      priority: 0.6
+    };
+
+    setPages(prev => [newPage, ...prev]);
+    setSkippedPages(prev => prev.filter(s => s.url !== skippedItem.url));
+    addToast(`Added ${skippedItem.url} to sitemap!`, 'success');
+  };
+
   const handleClearAll = () => {
     if (isCrawling) handleStopCrawl();
     setPages([]);
+    setCompletionStats(null);
+    setSkippedPages([]);
     setCrawlProgress({ current: 0, total: 100, percent: 0, currentUrl: '', status: 'idle' });
     addToast('Cleared all pages.', 'info');
   };
@@ -252,12 +305,15 @@ export default function App() {
         <LiveMetrics
           pages={pages}
           seoAudit={seoAudit}
+          stats={completionStats}
         />
 
         {/* Active Tab View */}
         {activeTab === 'generator' && (
           <GeneratorTab
             pages={pages}
+            skippedPages={skippedPages}
+            onIncludeSkipped={handleIncludeSkipped}
             onUpdatePage={handleUpdatePage}
             onDeletePage={handleDeletePage}
             onAddPage={handleAddPage}

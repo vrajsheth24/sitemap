@@ -46,7 +46,7 @@ export default function ProgressBar({ progress, isCrawling }) {
         {/* Counts & Percentage */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', fontSize: '0.85rem' }}>
           <span style={{ color: 'var(--text-muted)' }}>
-            <b style={{ color: 'var(--text-primary)' }}>{current}</b> / {total} pages
+            <b style={{ color: 'var(--text-primary)' }}>{current}</b> {isDone ? `pages added to sitemap` : `/ ${total} pages (limit)`}
           </span>
           <span 
             className="badge" 
@@ -58,7 +58,7 @@ export default function ProgressBar({ progress, isCrawling }) {
               padding: '0.2rem 0.55rem'
             }}
           >
-            {percent}%
+            {isDone ? '100%' : `${percent}%`}
           </span>
         </div>
       </div>
@@ -77,7 +77,7 @@ export default function ProgressBar({ progress, isCrawling }) {
         <div 
           style={{ 
             height: '100%', 
-            width: `${Math.min(100, Math.max(0, percent))}%`, 
+            width: `${isDone ? 100 : Math.min(100, Math.max(0, percent))}%`, 
             background: isDone 
               ? 'linear-gradient(90deg, #10b981, #06b6d4)' 
               : 'linear-gradient(90deg, #6366f1, #06b6d4, #10b981)',

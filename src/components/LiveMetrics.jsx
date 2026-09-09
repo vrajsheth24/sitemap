@@ -9,7 +9,7 @@ import {
   AlertCircle
 } from 'lucide-react';
 
-export default function LiveMetrics({ pages = [], seoAudit }) {
+export default function LiveMetrics({ pages = [], seoAudit, stats }) {
   const totalPages = pages.length;
   const healthy2xx = pages.filter(p => !p.statusCode || (p.statusCode >= 200 && p.statusCode < 300)).length;
   const broken4xx = pages.filter(p => p.statusCode && p.statusCode >= 400).length;
@@ -21,18 +21,28 @@ export default function LiveMetrics({ pages = [], seoAudit }) {
   const totalImages = pages.reduce((acc, p) => acc + (p.imagesCount || 0), 0);
   const score = seoAudit?.score || 100;
 
+  // Clear subtitle showing breakdown
+  let card1Subtitle = 'Awaiting website crawl';
+  if (totalPages > 0) {
+    if (stats && (stats.skipped > 0 || (stats.discovered && stats.discovered > totalPages))) {
+      card1Subtitle = `${totalPages} added, ${stats.skipped} skipped (${stats.discovered} links scanned)`;
+    } else {
+      card1Subtitle = `${totalPages} indexed • ${totalImages} image tags`;
+    }
+  }
+
   return (
     <div className="metrics-grid">
-      {/* 1. Total Discovered Pages */}
+      {/* 1. Total Sitemap Pages */}
       <div className="metric-card glass-panel">
         <div className="metric-icon-box" style={{ background: 'rgba(99, 102, 241, 0.15)', color: 'var(--primary)' }}>
           <Layers size={26} />
         </div>
         <div className="metric-content">
-          <span className="metric-title">Discovered Pages</span>
+          <span className="metric-title">Sitemap Pages</span>
           <span className="metric-val">{totalPages}</span>
           <span className="metric-subtitle">
-            {totalPages > 0 ? `${totalImages} image tags indexed` : 'Awaiting website crawl'}
+            {card1Subtitle}
           </span>
         </div>
       </div>

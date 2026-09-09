@@ -67,11 +67,16 @@ export default function CrawlerBar({
     if (isCrawling) {
       onStopCrawl();
     } else {
-      if (!targetUrl.trim()) {
+      let trimmed = targetUrl.trim();
+      if (!trimmed) {
         addToast('Please enter a website URL or select a preset.', 'warn');
         return;
       }
-      onStartCrawl();
+      if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) {
+        trimmed = 'https://' + trimmed;
+        setTargetUrl(trimmed);
+      }
+      onStartCrawl(trimmed);
     }
   };
 
@@ -203,6 +208,9 @@ export default function CrawlerBar({
                   <span>250</span>
                   <span>500</span>
                   <span>1000</span>
+                </div>
+                <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>
+                  Ceiling limit (stops when all real pages are crawled)
                 </div>
               </div>
 
