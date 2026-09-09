@@ -1,0 +1,722 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SitemapFlow - Modern Visual Sitemap Generator & Website Crawler</title>
+  <meta name="description" content="State-of-the-art visual sitemap generator and web crawler. Crawl any website, inspect SEO health, explore interactive directory trees, and generate compliant sitemap.xml files in seconds.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body class="theme-dark">
+  <!-- Background Glow & Grid -->
+  <div class="bg-grid-pattern"></div>
+  <div class="glow-orb orb-1"></div>
+  <div class="glow-orb orb-2"></div>
+
+  <!-- Header -->
+  <header class="navbar">
+    <div class="nav-container">
+      <div class="nav-brand">
+        <div class="brand-logo">
+          <i data-lucide="network"></i>
+        </div>
+        <div class="brand-text">
+          <span class="brand-title">Sitemap<span class="gradient-text">Flow</span></span>
+          <span class="brand-badge">PRO CRAWLER</span>
+        </div>
+      </div>
+
+      <nav class="nav-links">
+        <button class="nav-tab active" data-tab="generator-view">
+          <i data-lucide="compass"></i>
+          <span>Crawler & Generator</span>
+        </button>
+        <button class="nav-tab" data-tab="tree-view">
+          <i data-lucide="folder-tree"></i>
+          <span>Visual Site Tree</span>
+        </button>
+        <button class="nav-tab" data-tab="seo-view">
+          <i data-lucide="shield-check"></i>
+          <span>SEO Health Audit</span>
+        </button>
+        <button class="nav-tab" data-tab="validator-view">
+          <i data-lucide="file-check"></i>
+          <span>Sitemap Validator</span>
+        </button>
+      </nav>
+
+      <div class="nav-actions">
+        <div class="status-indicator-badge" id="globalStatusBadge">
+          <span class="status-dot ready"></span>
+          <span id="globalStatusText">Ready to Crawl</span>
+        </div>
+        <button id="themeToggleBtn" class="icon-btn" title="Toggle Theme">
+          <i data-lucide="sun"></i>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main class="main-wrapper">
+    <!-- HERO / CRAWLER CONTROL SECTION -->
+    <section class="hero-section">
+      
+
+      <!-- Crawler Input Bar -->
+      <div class="crawler-bar-card glass-panel">
+        <form id="crawlForm" class="crawler-form">
+          <div class="url-input-container">
+            <div class="input-icon">
+              <i data-lucide="globe"></i>
+            </div>
+            <input 
+              type="text" 
+              id="targetUrlInput" 
+              class="url-input" 
+              placeholder="Enter website URL (e.g. https://example.com)" 
+              required
+              autocomplete="off"
+            >
+            <button type="button" id="clearUrlBtn" class="clear-btn" title="Clear">
+              <i data-lucide="x"></i>
+            </button>
+          </div>
+
+          <div class="form-actions">
+            <button type="button" id="toggleAdvancedBtn" class="btn btn-secondary">
+              <i data-lucide="sliders"></i>
+              <span>Options</span>
+              <i data-lucide="chevron-down" class="chevron-icon"></i>
+            </button>
+            <button type="submit" id="startCrawlBtn" class="btn btn-primary glow-btn">
+              <i data-lucide="play"></i>
+              <span>Start Crawl</span>
+            </button>
+            <button type="button" id="stopCrawlBtn" class="btn btn-danger" style="display: none;">
+              <i data-lucide="square"></i>
+              <span>Stop Crawl</span>
+            </button>
+            <button type="button" id="resetAllBtn" class="btn btn-secondary" title="Reset all data and start fresh">
+              <i data-lucide="rotate-ccw"></i>
+              <span>Reset</span>
+            </button>
+          </div>
+        </form>
+
+        <!-- Quick Preset Badges -->
+        <div class="preset-row">
+          <span class="preset-label"><i data-lucide="zap"></i> Quick Presets:</span>
+          <button class="preset-btn" data-url="https://books.toscrape.com" data-pages="30" data-depth="3">Books Store (Demo)</button>
+          <button class="preset-btn" data-url="https://quotes.toscrape.com" data-pages="20" data-depth="2">Quotes Blog (Demo)</button>
+          <button class="preset-btn" data-url="https://news.ycombinator.com" data-pages="15" data-depth="2">Hacker News</button>
+          <button class="preset-btn" data-url="https://example.com" data-pages="10" data-depth="1">Example.com</button>
+        </div>
+
+        <!-- Advanced Options Drawer -->
+        <div id="advancedOptionsDrawer" class="advanced-drawer" style="display: none;">
+          <div class="options-grid">
+            <div class="option-group">
+              <div class="option-header">
+                <label for="maxPagesInput">Max Pages Limit</label>
+                <span class="option-val-display" id="maxPagesVal">100 pages</span>
+              </div>
+              <input type="range" id="maxPagesRange" min="5" max="1000" step="5" value="100" class="range-slider">
+              <div class="slider-ticks">
+                <span>5</span>
+                <span>250</span>
+                <span>500</span>
+                <span>1000</span>
+              </div>
+            </div>
+
+            <div class="option-group">
+              <div class="option-header">
+                <label for="maxDepthInput">Max Crawl Depth</label>
+                <span class="option-val-display" id="maxDepthVal">4 levels</span>
+              </div>
+              <input type="range" id="maxDepthRange" min="1" max="10" step="1" value="4" class="range-slider">
+              <div class="slider-ticks">
+                <span>1 (Root)</span>
+                <span>3</span>
+                <span>6</span>
+                <span>10 (Deep)</span>
+              </div>
+            </div>
+
+            <div class="option-group">
+              <div class="option-header">
+                <label for="concurrencyInput">Concurrent Workers</label>
+                <span class="option-val-display" id="concurrencyVal">4 threads</span>
+              </div>
+              <input type="range" id="concurrencyRange" min="1" max="10" step="1" value="4" class="range-slider">
+              <div class="slider-ticks">
+                <span>1 (Gentle)</span>
+                <span>4</span>
+                <span>7</span>
+                <span>10 (Turbo)</span>
+              </div>
+            </div>
+
+            <div class="option-group">
+              <label for="userAgentSelect">Crawler User-Agent</label>
+              <select id="userAgentSelect" class="custom-select">
+                <option value="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36">Chrome Desktop (Recommended)</option>
+                <option value="Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)">Googlebot</option>
+                <option value="Mozilla/5.0 (compatible; bingbot/2.0; +http://www.bing.com/bingbot.htm)">Bingbot</option>
+                <option value="Screaming Frog SEO Spider/19.4">Screaming Frog SEO Spider</option>
+                <option value="Mozilla/5.0 (compatible; SitemapBot/1.0; +https://github.com/sitemap-generator)">SitemapBot</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="options-toggles-row">
+            <label class="toggle-control">
+              <input type="checkbox" id="respectRobotsToggle">
+              <span class="toggle-slider"></span>
+              <span class="toggle-text">Respect robots.txt (Uncheck to bypass restrictive rules)</span>
+            </label>
+
+            <label class="toggle-control">
+              <input type="checkbox" id="includeImagesToggle" checked>
+              <span class="toggle-slider"></span>
+              <span class="toggle-text">Extract Images for &lt;image:image&gt;</span>
+            </label>
+
+            <label class="toggle-control">
+              <input type="checkbox" id="includeSubdomainsToggle">
+              <span class="toggle-slider"></span>
+              <span class="toggle-text">Follow Subdomains</span>
+            </label>
+
+            <label class="toggle-control">
+              <input type="checkbox" id="filterNoindexToggle" checked>
+              <span class="toggle-slider"></span>
+              <span class="toggle-text">Exclude Noindex Pages from XML</span>
+            </label>
+          </div>
+
+          <div class="patterns-grid">
+            <div class="pattern-col">
+              <label><i data-lucide="filter"></i> Exclude URL Patterns (Regex or substring, 1 per line)</label>
+              <textarea id="excludePatternsInput" rows="2" class="code-textarea" placeholder="e.g. /cart&#10;/checkout&#10;\?sort="></textarea>
+            </div>
+            <div class="pattern-col">
+              <label><i data-lucide="plus-circle"></i> Include URL Patterns (Optional filter)</label>
+              <textarea id="includePatternsInput" rows="2" class="code-textarea" placeholder="e.g. /blog/&#10;/products/"></textarea>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- LIVE MONITORING DASHBOARD (Shows when crawling / completed) -->
+    <section id="monitorSection" class="monitor-section">
+      <!-- Top Metrics Row -->
+      <div class="metrics-grid">
+        <div class="metric-card glass-panel">
+          <div class="metric-icon blue">
+            <i data-lucide="files"></i>
+          </div>
+          <div class="metric-info">
+            <span class="metric-label">Pages Crawled</span>
+            <span class="metric-value" id="crawledCount">0</span>
+          </div>
+          <div class="metric-sub" id="crawledTarget">Limit: 100</div>
+        </div>
+
+        <div class="metric-card glass-panel">
+          <div class="metric-icon purple">
+            <i data-lucide="layers"></i>
+          </div>
+          <div class="metric-info">
+            <span class="metric-label">Queue Remaining</span>
+            <span class="metric-value" id="queuedCount">0</span>
+          </div>
+          <div class="metric-sub">Discovered in pool</div>
+        </div>
+
+        <div class="metric-card glass-panel">
+          <div class="metric-icon green">
+            <i data-lucide="check-circle-2"></i>
+          </div>
+          <div class="metric-info">
+            <span class="metric-label">2xx Success</span>
+            <span class="metric-value text-green" id="successCount">0</span>
+          </div>
+          <div class="metric-sub" id="successRate">100% valid</div>
+        </div>
+
+        <div class="metric-card glass-panel">
+          <div class="metric-icon red">
+            <i data-lucide="alert-triangle"></i>
+          </div>
+          <div class="metric-info">
+            <span class="metric-label">Issues & 4xx/5xx</span>
+            <span class="metric-value text-red" id="issuesCount">0</span>
+          </div>
+          <div class="metric-sub" id="issuesRate">0 broken links</div>
+        </div>
+
+        <div class="metric-card glass-panel">
+          <div class="metric-icon amber">
+            <i data-lucide="image"></i>
+          </div>
+          <div class="metric-info">
+            <span class="metric-label">Images Found</span>
+            <span class="metric-value" id="imagesCount">0</span>
+          </div>
+          <div class="metric-sub">Media indexed</div>
+        </div>
+
+        <div class="metric-card glass-panel">
+          <div class="metric-icon cyan">
+            <i data-lucide="timer"></i>
+          </div>
+          <div class="metric-info">
+            <span class="metric-label">Avg Speed</span>
+            <span class="metric-value" id="avgSpeed">0 ms</span>
+          </div>
+          <div class="metric-sub" id="durationDisplay">Elapsed: 0s</div>
+        </div>
+      </div>
+
+      <!-- Live Progress Bar -->
+      <div class="progress-container glass-panel">
+        <div class="progress-info-row">
+          <div class="current-crawling-url">
+            <span class="pulse-dot"></span>
+            <span class="crawling-label">Crawling:</span>
+            <span id="currentUrlDisplay" class="url-text">Waiting to start...</span>
+          </div>
+          <span class="progress-percent" id="progressPercentDisplay">0%</span>
+        </div>
+        <div class="progress-bar-bg">
+          <div class="progress-bar-fill" id="progressBarFill" style="width: 0%;"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- CONTENT TABS & VIEWS -->
+    <div class="content-container">
+
+      <!-- VIEW 1: CRAWLER & GENERATOR (TABLE + LIVE LOGS + XML EXPORT) -->
+      <section id="generator-view" class="view-panel active">
+        
+        <!-- Robots.txt Blocked Alert Banner (Shown when robots.txt restricts crawl) -->
+        <div id="robotsBlockedBanner" class="robots-alert-banner glass-panel" style="display: none;">
+          <div class="robots-alert-icon">
+            <i data-lucide="shield-alert"></i>
+          </div>
+          <div class="robots-alert-content">
+            <h4>Crawl Blocked by Target's robots.txt</h4>
+            <p>The target website has a <code>User-agent: * Disallow: /</code> rule in its <code>robots.txt</code> file blocking automated bots.</p>
+            <div class="robots-alert-actions">
+              <button id="retryBypassRobotsBtn" class="btn btn-sm btn-primary">
+                <i data-lucide="zap"></i>
+                <span>Re-crawl (Bypass robots.txt)</span>
+              </button>
+              <button id="retryGooglebotBtn" class="btn btn-sm btn-secondary">
+                <i data-lucide="bot"></i>
+                <span>Re-crawl as Googlebot</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Live Action Bar & Export Options -->
+        <div class="action-toolbar glass-panel">
+          <div class="toolbar-left">
+            <div class="search-box">
+              <i data-lucide="search"></i>
+              <input type="text" id="tableSearchInput" placeholder="Filter crawled URLs or titles...">
+            </div>
+            <div class="filter-pill-group">
+              <button class="filter-pill active" data-status="all">All (<span id="filterAllCount">0</span>)</button>
+              <button class="filter-pill" data-status="2xx">2xx OK (<span id="filter2xxCount">0</span>)</button>
+              <button class="filter-pill" data-status="3xx">3xx Redirects (<span id="filter3xxCount">0</span>)</button>
+              <button class="filter-pill" data-status="4xx">4xx Errors (<span id="filter4xxCount">0</span>)</button>
+              <button class="filter-pill" data-status="5xx">5xx Errors (<span id="filter5xxCount">0</span>)</button>
+            </div>
+          </div>
+
+          <div class="toolbar-right">
+            <button id="downloadXmlBtn" class="btn btn-emerald" disabled>
+              <i data-lucide="download"></i>
+              <span>Download sitemap.xml</span>
+            </button>
+            <div class="dropdown">
+              <button id="exportMoreBtn" class="btn btn-secondary dropdown-toggle" disabled>
+                <i data-lucide="file-output"></i>
+                <span>More Formats</span>
+                <i data-lucide="chevron-down"></i>
+              </button>
+              <div class="dropdown-menu" id="exportDropdownMenu">
+                <a href="#" class="dropdown-item" id="exportTxtLink"><i data-lucide="file-text"></i> URL List (.txt)</a>
+                <a href="#" class="dropdown-item" id="exportCsvLink"><i data-lucide="sheet"></i> SEO Report (.csv)</a>
+                <a href="#" class="dropdown-item" id="exportJsonLink"><i data-lucide="braces"></i> Structured (.json)</a>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Two Column Main Layout: Data Table + Side XML Preview / Terminal -->
+        <div class="layout-split">
+          <!-- Left: Table of Crawled Pages -->
+          <div class="table-container glass-panel">
+            <div class="panel-header">
+              <div class="panel-title">
+                <i data-lucide="table"></i>
+                <span>Indexed Pages Data Grid</span>
+              </div>
+              <div class="table-stats" id="tableShowingCount">Showing 0 pages</div>
+            </div>
+
+            <div class="table-responsive">
+              <table class="data-table" id="pagesTable">
+                <thead>
+                  <tr>
+                    <th width="90">Status</th>
+                    <th>URL & Page Title</th>
+                    <th width="70">Depth</th>
+                    <th width="90">Speed</th>
+                    <th width="80">Size</th>
+                    <th width="80">Links</th>
+                    <th width="70">Images</th>
+                    <th width="70">Inspect</th>
+                  </tr>
+                </thead>
+                <tbody id="pagesTableBody">
+                  <tr class="empty-row">
+                    <td colspan="8">
+                      <div class="table-empty-state">
+                        <i data-lucide="compass"></i>
+                        <p>No URLs crawled yet. Enter a website URL above and click "Start Crawl".</p>
+                      </div>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <!-- Table Pagination Bar -->
+            <div class="table-pagination-bar">
+              <div class="pagination-info">
+                <span id="paginationInfoText">Page 1 of 1</span>
+                <select id="pageSizeSelect" class="custom-select pagination-select">
+                  <option value="25">25 / page</option>
+                  <option value="50">50 / page</option>
+                  <option value="100">100 / page</option>
+                </select>
+              </div>
+              <div class="pagination-controls">
+                <button id="prevPageBtn" class="btn-page" disabled title="Previous Page">
+                  <i data-lucide="chevron-left"></i>
+                </button>
+                <div class="page-numbers-list" id="pageNumbersList"></div>
+                <button id="nextPageBtn" class="btn-page" disabled title="Next Page">
+                  <i data-lucide="chevron-right"></i>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Right Column: Tabbed Logs / XML Preview -->
+          <div class="side-panel glass-panel">
+            <div class="side-tab-nav">
+              <button class="side-tab active" data-sidetab="xml-preview-tab">
+                <i data-lucide="code-2"></i>
+                <span>sitemap.xml Preview</span>
+              </button>
+              <button class="side-tab" data-sidetab="logs-tab">
+                <i data-lucide="terminal"></i>
+                <span>Crawler Live Log</span>
+                <span class="badge" id="logsCountBadge">0</span>
+              </button>
+            </div>
+
+            <!-- XML Live Preview Tab -->
+            <div id="xml-preview-tab" class="side-tab-content active">
+              <div class="xml-toolbar">
+                <div class="xml-meta">
+                  <span id="xmlEntriesCount">0 URLs in sitemap</span>
+                </div>
+                <div class="xml-actions">
+                  <button id="copyXmlBtn" class="icon-btn-small" title="Copy XML to Clipboard">
+                    <i data-lucide="copy"></i>
+                    <span>Copy</span>
+                  </button>
+                  <button id="formatXmlBtn" class="icon-btn-small" title="Format XML">
+                    <i data-lucide="sparkles"></i>
+                  </button>
+                </div>
+              </div>
+              <div class="xml-code-wrapper">
+                <pre><code id="xmlPreviewCode" class="xml-code">&lt;!-- sitemap.xml will be generated automatically as URLs are crawled --&gt;</code></pre>
+              </div>
+            </div>
+
+            <!-- Live Log Terminal Tab -->
+            <div id="logs-tab" class="side-tab-content">
+              <div class="log-terminal-header">
+                <span class="terminal-dot red"></span>
+                <span class="terminal-dot yellow"></span>
+                <span class="terminal-dot green"></span>
+                <span class="terminal-title">crawler.stdout</span>
+                <button id="clearLogsBtn" class="icon-btn-small ml-auto" title="Clear Logs">
+                  <i data-lucide="trash-2"></i>
+                </button>
+              </div>
+              <div class="log-terminal-body" id="logTerminalBody">
+                <div class="log-entry info">
+                  <span class="log-time">[System]</span> Ready. Awaiting crawl initiation...
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </section>
+
+      <!-- VIEW 2: VISUAL SITE HIERARCHY TREE -->
+      <section id="tree-view" class="view-panel">
+        <div class="glass-panel tree-container-panel">
+          <div class="panel-header">
+            <div class="panel-title">
+              <i data-lucide="folder-tree"></i>
+              <span>Interactive Site Architecture & Directory Hierarchy</span>
+            </div>
+            <div class="tree-controls">
+              <button id="expandAllTreeBtn" class="btn btn-secondary btn-sm">
+                <i data-lucide="unfold-vertical"></i>
+                <span>Expand All</span>
+              </button>
+              <button id="collapseAllTreeBtn" class="btn btn-secondary btn-sm">
+                <i data-lucide="fold-vertical"></i>
+                <span>Collapse All</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="tree-content-wrapper" id="treeContentWrapper">
+            <div class="tree-empty-state">
+              <i data-lucide="network"></i>
+              <p>Visual tree will be generated automatically after starting a website crawl.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- VIEW 3: SEO HEALTH & BROKEN LINK AUDIT -->
+      <section id="seo-view" class="view-panel">
+        <div class="glass-panel seo-dashboard-panel">
+          <div class="panel-header">
+            <div class="panel-title">
+              <i data-lucide="shield-check"></i>
+              <span>SEO Quality, Indexability & Technical Audit</span>
+            </div>
+            <div class="seo-score-badge" id="seoScoreBadge">
+              <span class="score-number" id="seoScoreNum">100</span>
+              <span class="score-label">/ 100 SEO Score</span>
+            </div>
+          </div>
+
+          <!-- SEO Cards Grid -->
+          <div class="seo-cards-grid">
+            <div class="seo-card">
+              <div class="seo-card-header">
+                <i data-lucide="link-2-off" class="text-red"></i>
+                <h4>Broken Links & Errors (4xx/5xx)</h4>
+                <span class="count-tag red" id="brokenLinksCount">0</span>
+              </div>
+              <p class="seo-card-desc">Pages returning client or server errors that harm indexation.</p>
+              <ul class="seo-list" id="brokenLinksList">
+                <li class="empty-list-item">No broken links found.</li>
+              </ul>
+            </div>
+
+            <div class="seo-card">
+              <div class="seo-card-header">
+                <i data-lucide="type" class="text-amber"></i>
+                <h4>Missing Titles & H1 Tags</h4>
+                <span class="count-tag amber" id="missingTitlesCount">0</span>
+              </div>
+              <p class="seo-card-desc">Pages lacking descriptive title tags or primary H1 headers.</p>
+              <ul class="seo-list" id="missingTitlesList">
+                <li class="empty-list-item">All crawled pages have title tags.</li>
+              </ul>
+            </div>
+
+            <div class="seo-card">
+              <div class="seo-card-header">
+                <i data-lucide="file-minus" class="text-purple"></i>
+                <h4>Missing Meta Descriptions</h4>
+                <span class="count-tag purple" id="missingDescCount">0</span>
+              </div>
+              <p class="seo-card-desc">Pages without meta descriptions for search snippet previews.</p>
+              <ul class="seo-list" id="missingDescList">
+                <li class="empty-list-item">Meta descriptions audit clear.</li>
+              </ul>
+            </div>
+
+            <div class="seo-card">
+              <div class="seo-card-header">
+                <i data-lucide="zap-off" class="text-cyan"></i>
+                <h4>Slow Response Times (> 1.5s)</h4>
+                <span class="count-tag cyan" id="slowPagesCount">0</span>
+              </div>
+              <p class="seo-card-desc">Slow-loading URLs that could negatively impact Core Web Vitals.</p>
+              <ul class="seo-list" id="slowPagesList">
+                <li class="empty-list-item">All pages respond swiftly.</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- VIEW 4: SITEMAP VALIDATOR & SEARCH ENGINE PING HELPER -->
+      <section id="validator-view" class="view-panel">
+        <div class="validator-grid">
+          <!-- Validator Form -->
+          <div class="glass-panel validator-form-card">
+            <div class="panel-header">
+              <div class="panel-title">
+                <i data-lucide="check-square"></i>
+                <span>Validate Any XML Sitemap</span>
+              </div>
+            </div>
+
+            <div class="validator-tabs">
+              <button class="v-tab active" data-vtab="val-paste-tab">Paste XML Text</button>
+              <button class="v-tab" data-vtab="val-url-tab">Fetch from URL</button>
+            </div>
+
+            <div id="val-paste-tab" class="v-tab-content active">
+              <textarea id="validateXmlInput" class="code-textarea validator-area" placeholder="Paste raw XML sitemap content here to test against Sitemaps 0.9 schema standard..."></textarea>
+              <button id="runValidateXmlBtn" class="btn btn-primary mt-3">
+                <i data-lucide="check"></i>
+                <span>Validate XML Code</span>
+              </button>
+            </div>
+
+            <div id="val-url-tab" class="v-tab-content">
+              <div class="url-input-container mt-2">
+                <div class="input-icon"><i data-lucide="link"></i></div>
+                <input type="text" id="validateSitemapUrlInput" class="url-input" placeholder="https://example.com/sitemap.xml">
+              </div>
+              <button id="runValidateUrlBtn" class="btn btn-primary mt-3">
+                <i data-lucide="download-cloud"></i>
+                <span>Fetch & Validate</span>
+              </button>
+            </div>
+
+            <!-- Validation Results Box -->
+            <div id="validationResultsBox" class="validation-results mt-4" style="display: none;">
+              <div class="results-header" id="valResultsHeader">
+                <i data-lucide="check-circle" class="text-green"></i>
+                <span id="valResultsSummary">Validation Passed</span>
+              </div>
+              <div class="val-stats-pills" id="valStatsPills"></div>
+              <ul class="val-issues-list" id="valIssuesList"></ul>
+            </div>
+          </div>
+
+          <!-- Search Engine Submission & Guides -->
+          <div class="glass-panel ping-guide-card">
+            <div class="panel-header">
+              <div class="panel-title">
+                <i data-lucide="send"></i>
+                <span>Search Engine Submission Guide</span>
+              </div>
+            </div>
+
+            <div class="guide-steps">
+              <div class="guide-step">
+                <div class="step-num">1</div>
+                <div class="step-content">
+                  <h5>Upload to your Web Server</h5>
+                  <p>Save the generated file as <code>sitemap.xml</code> in your website's root directory (e.g. <code>https://yourdomain.com/sitemap.xml</code>).</p>
+                </div>
+              </div>
+
+              <div class="guide-step">
+                <div class="step-num">2</div>
+                <div class="step-content">
+                  <h5>Declare in robots.txt</h5>
+                  <p>Add this line at the bottom of your <code>robots.txt</code> file:</p>
+                  <pre class="code-snippet"><code>Sitemap: https://yourdomain.com/sitemap.xml</code></pre>
+                </div>
+              </div>
+
+              <div class="guide-step">
+                <div class="step-num">3</div>
+                <div class="step-content">
+                  <h5>Submit to Google Search Console</h5>
+                  <p>Visit Search Console &rarr; Sitemaps section and enter your URL.</p>
+                  <a href="https://search.google.com/search-console" target="_blank" rel="noopener" class="guide-link">
+                    Open Google Search Console <i data-lucide="external-link"></i>
+                  </a>
+                </div>
+              </div>
+
+              <div class="guide-step">
+                <div class="step-num">4</div>
+                <div class="step-content">
+                  <h5>Submit to Bing Webmaster Tools</h5>
+                  <p>Bing also indexes DuckDuckGo, Yahoo & Ecosia search engines.</p>
+                  <a href="https://www.bing.com/webmasters" target="_blank" rel="noopener" class="guide-link">
+                    Open Bing Webmasters <i data-lucide="external-link"></i>
+                  </a>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+    </div>
+  </main>
+
+  <!-- URL INSPECT MODAL -->
+  <div id="urlInspectModal" class="modal-backdrop" style="display: none;">
+    <div class="modal-dialog glass-panel">
+      <div class="modal-header">
+        <div class="modal-title">
+          <i data-lucide="info"></i>
+          <span>Page Inspection Details</span>
+        </div>
+        <button id="closeModalBtn" class="close-modal-btn">
+          <i data-lucide="x"></i>
+        </button>
+      </div>
+
+      <div class="modal-body" id="modalBodyContent">
+        <!-- Injected via JavaScript -->
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notification Container -->
+  <div id="toastContainer" class="toast-container"></div>
+
+  <!-- Footer -->
+  <footer class="footer">
+    <div class="footer-content">
+      <div class="footer-left">
+        <span class="footer-logo">SitemapFlow</span>
+        <span>&bull;</span>
+        <span>High-Performance XML Sitemap Generator & Web Crawler</span>
+      </div>
+      <div class="footer-right">
+        <span>Compliant with Google Sitemaps 0.9 Protocol</span>
+      </div>
+    </div>
+  </footer>
+
+  <script src="js/app.js"></script>
+</body>
+</html>
