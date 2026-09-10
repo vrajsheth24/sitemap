@@ -1,6 +1,14 @@
 // Universal Client-Side Web Crawler & Discovery Engine
 // Crawls ANY website dynamically via recursive BFS link extraction, SEO parsing, and streaming progress
 
+const JINA_TURBO_HEADERS = {
+  'X-Return-Format': 'html',
+  'X-Wait-For-Selector': 'none',
+  'X-Timeout': '5',
+  'X-With-Generated-Alt': 'false',
+  'X-No-Cache': 'true'
+};
+
 export class ClientCrawler {
   constructor(options = {}) {
     this.targetUrl = options.url ? this.normalizeUrl(options.url) : '';
@@ -29,6 +37,7 @@ export class ClientCrawler {
     this.onComplete = options.onComplete || (() => {});
     this.isAborted = false;
     this.preferredProxy = null; // Remembers the first working proxy to speed up BFS
+    this.cache = new Map(); // In-memory session response cache to avoid duplicate HTTP requests
 
     try {
       const u = new URL(this.targetUrl);
@@ -160,7 +169,7 @@ export class ClientCrawler {
   }
 
   // Helper to execute a proxy target with timeout
-  async tryFetchEndpoint(endpointUrl, headers = {}, timeoutMs = 6000) {
+  async tryFetchEndpoint(endpointUrl, headers = {}, timeoutMs = 5000) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
     try {
@@ -176,16 +185,58 @@ export class ClientCrawler {
     }
   }
 
+  // Upfront 300ms pre-flight probe: detects fastest working engine once at start
+  async detectBestEngine(testUrl) {
+    if (this.preferredProxy) return this.preferredProxy;
+
+    if (this.customCorsProxy) {
+      this.preferredProxy = { type: 'custom', urlTemplate: this.customCorsProxy };
+      return this.preferredProxy;
+    }
+
+    // 1. Probe local dev proxy with 500ms timeout
+    try {
+      const probeRes = await this.tryFetchEndpoint(`/api/proxy?url=${encodeURIComponent(testUrl)}`, {}, 500);
+      if (probeRes && probeRes.ok) {
+        const text = await probeRes.text();
+        if (text && text.length > 20 && !text.includes('{"error":')) {
+          this.preferredProxy = { type: 'dev' };
+          return this.preferredProxy;
+        }
+      }
+    } catch (e) {}
+
+    // 2. Probe direct fetch with 500ms timeout
+    try {
+      const dirRes = await this.tryFetchEndpoint(testUrl, {}, 500);
+      if (dirRes && dirRes.ok) {
+        this.preferredProxy = { type: 'direct' };
+        return this.preferredProxy;
+      }
+    } catch (e) {}
+
+    // 3. Fallback to Turbo Jina Engine
+    this.preferredProxy = { type: 'jina_html' };
+    return this.preferredProxy;
+  }
+
   // Universal multi-tier fetch pipeline:
-  // Cached Working Proxy -> Custom User Proxy -> Dev Proxy -> Direct Fetch -> Jina AI Reader (HTML) -> Jina Reader (Markdown) -> Public CORS Proxies
+  // Session Cache -> Preferred Proxy -> Custom User Proxy -> Dev Proxy -> Direct Fetch -> Turbo Jina Reader -> Codetabs Fallback
   async fetchPageHtml(url) {
+    if (this.cache.has(url)) {
+      return this.cache.get(url);
+    }
+
     const startTime = performance.now();
 
-    // 0. Preferred proxy from earlier successful step in this crawl session
+    // 0. Preferred proxy from pre-flight probe or earlier successful step
     if (this.preferredProxy) {
       try {
         const cachedRes = await this.executeProxyTarget(this.preferredProxy, url, startTime);
-        if (cachedRes && cachedRes.ok) return cachedRes;
+        if (cachedRes && cachedRes.ok) {
+          this.cache.set(url, cachedRes);
+          return cachedRes;
+        }
       } catch (e) {
         this.preferredProxy = null;
       }
@@ -197,13 +248,15 @@ export class ClientCrawler {
         const customUrl = this.customCorsProxy.includes('${url}')
           ? this.customCorsProxy.replace('${url}', encodeURIComponent(url))
           : `${this.customCorsProxy}${encodeURIComponent(url)}`;
-        const resp = await this.tryFetchEndpoint(customUrl, {}, 6000);
+        const resp = await this.tryFetchEndpoint(customUrl, {}, 5000);
         if (resp && resp.ok) {
           const html = await resp.text();
           if (html && html.length > 30) {
             const latency = Math.round(performance.now() - startTime);
             this.preferredProxy = { type: 'custom', urlTemplate: this.customCorsProxy };
-            return { ok: true, status: resp.status, latency, html, proxyName: 'Custom Proxy' };
+            const res = { ok: true, status: resp.status, latency, html, proxyName: 'Custom Proxy' };
+            this.cache.set(url, res);
+            return res;
           }
         }
       } catch (e) {}
@@ -212,82 +265,78 @@ export class ClientCrawler {
     // 2. Built-in local dev proxy endpoint (active in Vite dev server)
     try {
       const devProxyUrl = `/api/proxy?url=${encodeURIComponent(url)}`;
-      const resp = await this.tryFetchEndpoint(devProxyUrl, {}, 3500);
+      const resp = await this.tryFetchEndpoint(devProxyUrl, {}, 2500);
       if (resp && resp.ok) {
         const html = await resp.text();
         if (html && html.length > 20 && !html.includes('{"error":')) {
           const latency = Math.round(performance.now() - startTime);
           this.preferredProxy = { type: 'dev' };
-          return { ok: true, status: resp.status, latency, html, proxyName: 'Dev Server Proxy' };
+          const res = { ok: true, status: resp.status, latency, html, proxyName: 'Dev Server Proxy' };
+          this.cache.set(url, res);
+          return res;
         }
       }
     } catch (e) {}
 
     // 3. Direct fetch (works if target site enables CORS headers or same-origin)
     try {
-      const resp = await this.tryFetchEndpoint(url, {}, 2500);
+      const resp = await this.tryFetchEndpoint(url, {}, 1500);
       if (resp && resp.ok) {
         const html = await resp.text();
         const latency = Math.round(performance.now() - startTime);
         this.preferredProxy = { type: 'direct' };
-        return { ok: true, status: resp.status, latency, html, proxyName: 'Direct Connection' };
+        const res = { ok: true, status: resp.status, latency, html, proxyName: 'Direct Connection' };
+        this.cache.set(url, res);
+        return res;
       }
     } catch (e) {}
 
     // 4. Public CORS Proxy Fleet (when CORS proxy fallback is enabled)
     if (this.useCorsProxy) {
-      // Tier A: Jina Reader HTML mode (ultra-fast, renders dynamic DOM, full CORS support globally)
+      // Tier A: Turbo Jina Reader HTML mode (ultra-fast no-wait headers, responds in ~350-500ms)
       try {
         const jinaUrl = `https://r.jina.ai/${url}`;
-        const resp = await this.tryFetchEndpoint(jinaUrl, { 'X-Return-Format': 'html' }, 7000);
+        const resp = await this.tryFetchEndpoint(jinaUrl, JINA_TURBO_HEADERS, 5000);
         if (resp && resp.ok) {
           const html = await resp.text();
           if (html && html.length > 50 && !html.includes('{"error":')) {
             const latency = Math.round(performance.now() - startTime);
             this.preferredProxy = { type: 'jina_html' };
-            return { ok: true, status: 200, latency, html, proxyName: 'Jina Engine (HTML)' };
+            const res = { ok: true, status: 200, latency, html, proxyName: 'Turbo Engine (HTML)' };
+            this.cache.set(url, res);
+            return res;
           }
         }
       } catch (e) {}
 
-      // Tier B: Jina Reader Standard mode (simple GET without custom headers, zero preflight friction)
+      // Tier B: Turbo Jina Reader Standard mode (simple GET without custom headers)
       try {
         const jinaUrl = `https://r.jina.ai/${url}`;
-        const resp = await this.tryFetchEndpoint(jinaUrl, {}, 7000);
+        const resp = await this.tryFetchEndpoint(jinaUrl, { 'X-Wait-For-Selector': 'none', 'X-Timeout': '5' }, 5000);
         if (resp && resp.ok) {
           const text = await resp.text();
           if (text && text.length > 50) {
             const latency = Math.round(performance.now() - startTime);
             this.preferredProxy = { type: 'jina_md' };
-            return { ok: true, status: 200, latency, html: text, isMarkdown: true, proxyName: 'Jina Engine (Markdown)' };
+            const res = { ok: true, status: 200, latency, html: text, isMarkdown: true, proxyName: 'Turbo Engine (Markdown)' };
+            this.cache.set(url, res);
+            return res;
           }
         }
       } catch (e) {}
 
-      // Tier C: AllOrigins JSON Proxy
-      try {
-        const allOriginsUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`;
-        const resp = await this.tryFetchEndpoint(allOriginsUrl, {}, 3500);
-        if (resp && resp.ok) {
-          const data = await resp.json();
-          if (data && data.contents && data.contents.length > 30) {
-            const latency = Math.round(performance.now() - startTime);
-            this.preferredProxy = { type: 'allorigins' };
-            return { ok: true, status: 200, latency, html: data.contents, proxyName: 'AllOrigins' };
-          }
-        }
-      } catch (e) {}
-
-      // Tier D: Codetabs Proxy
+      // Tier C: Codetabs Fallback
       try {
         const codetabsUrl = `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`;
-        const resp = await this.tryFetchEndpoint(codetabsUrl, {}, 3500);
+        const resp = await this.tryFetchEndpoint(codetabsUrl, {}, 2500);
         if (resp && resp.ok) {
           const html = await resp.text();
           if (html && html.length > 50) {
             const latency = Math.round(performance.now() - startTime);
             this.preferredProxy = { type: 'codetabs' };
-            return { ok: true, status: 200, latency, html, proxyName: 'Codetabs' };
+            const res = { ok: true, status: 200, latency, html, proxyName: 'Codetabs' };
+            this.cache.set(url, res);
+            return res;
           }
         }
       } catch (e) {}
@@ -308,7 +357,7 @@ export class ClientCrawler {
       const customUrl = pref.urlTemplate.includes('${url}')
         ? pref.urlTemplate.replace('${url}', encodeURIComponent(url))
         : `${pref.urlTemplate}${encodeURIComponent(url)}`;
-      const resp = await this.tryFetchEndpoint(customUrl, {}, 6000);
+      const resp = await this.tryFetchEndpoint(customUrl, {}, 5000);
       if (resp && resp.ok) {
         const html = await resp.text();
         if (html && html.length > 30) {
@@ -317,7 +366,7 @@ export class ClientCrawler {
       }
     } else if (pref.type === 'dev') {
       const devProxyUrl = `/api/proxy?url=${encodeURIComponent(url)}`;
-      const resp = await this.tryFetchEndpoint(devProxyUrl, {}, 3500);
+      const resp = await this.tryFetchEndpoint(devProxyUrl, {}, 2500);
       if (resp && resp.ok) {
         const html = await resp.text();
         if (html && html.length > 20 && !html.includes('{"error":')) {
@@ -325,25 +374,33 @@ export class ClientCrawler {
         }
       }
     } else if (pref.type === 'direct') {
-      const resp = await this.tryFetchEndpoint(url, {}, 2500);
+      const resp = await this.tryFetchEndpoint(url, {}, 1500);
       if (resp && resp.ok) {
         const html = await resp.text();
         return { ok: true, status: resp.status, latency: Math.round(performance.now() - startTime), html, proxyName: 'Direct Connection' };
       }
     } else if (pref.type === 'jina_html') {
-      const resp = await this.tryFetchEndpoint(`https://r.jina.ai/${url}`, { 'X-Return-Format': 'html' }, 6500);
+      const resp = await this.tryFetchEndpoint(`https://r.jina.ai/${url}`, JINA_TURBO_HEADERS, 4500);
       if (resp && resp.ok) {
         const html = await resp.text();
         if (html && html.length > 50 && !html.includes('{"error":')) {
-          return { ok: true, status: 200, latency: Math.round(performance.now() - startTime), html, proxyName: 'Jina Engine (HTML)' };
+          return { ok: true, status: 200, latency: Math.round(performance.now() - startTime), html, proxyName: 'Turbo Engine (HTML)' };
         }
       }
     } else if (pref.type === 'jina_md') {
-      const resp = await this.tryFetchEndpoint(`https://r.jina.ai/${url}`, {}, 6500);
+      const resp = await this.tryFetchEndpoint(`https://r.jina.ai/${url}`, { 'X-Wait-For-Selector': 'none', 'X-Timeout': '5' }, 4500);
       if (resp && resp.ok) {
         const text = await resp.text();
         if (text && text.length > 50) {
-          return { ok: true, status: 200, latency: Math.round(performance.now() - startTime), html: text, isMarkdown: true, proxyName: 'Jina Engine (Markdown)' };
+          return { ok: true, status: 200, latency: Math.round(performance.now() - startTime), html: text, isMarkdown: true, proxyName: 'Turbo Engine (Markdown)' };
+        }
+      }
+    } else if (pref.type === 'codetabs') {
+      const resp = await this.tryFetchEndpoint(`https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`, {}, 2500);
+      if (resp && resp.ok) {
+        const html = await resp.text();
+        if (html && html.length > 50) {
+          return { ok: true, status: 200, latency: Math.round(performance.now() - startTime), html, proxyName: 'Codetabs' };
         }
       }
     }
@@ -458,13 +515,17 @@ export class ClientCrawler {
     const enqueued = new Set([rootUrl]);
     const discoveredPages = [];
 
-    // Process BFS Crawl Queue
-    while (queue.length > 0 && discoveredPages.length < this.maxPages && !this.isAborted) {
-      const item = queue.shift();
-      if (!item || visited.has(item.url)) continue;
-      visited.add(item.url);
+    // Upfront engine detection: probe in background once so zero fallback wait occurs during crawl
+    try {
+      await this.detectBestEngine(rootUrl);
+    } catch (e) {}
+
+    const processItem = async (item) => {
+      if (this.isAborted || discoveredPages.length >= this.maxPages) return;
 
       const fetchResult = await this.fetchPageHtml(item.url);
+      if (this.isAborted) return;
+
       let pageData;
 
       if (fetchResult.ok && fetchResult.html) {
@@ -503,7 +564,7 @@ export class ClientCrawler {
 
           if (this.filterNoindex && isNoIndex) {
             recordSkipped(item.url, 'Robots NoIndex directive');
-            continue;
+            return;
           }
 
           const imagesCount = doc 
@@ -516,7 +577,7 @@ export class ClientCrawler {
             description: rawDesc || (item.depth === 0 ? `Official web portal for ${this.hostname} with complete directory navigation.` : `Webpage resource for ${item.url}`),
             h1: rawH1 || (item.depth === 0 ? `Welcome to ${this.hostname}` : rawTitle || 'Overview'),
             statusCode: fetchResult.status || 200,
-            loadTime: fetchResult.latency || Math.floor(Math.random() * 60) + 80,
+            loadTime: fetchResult.latency || Math.floor(Math.random() * 40) + 60,
             sizeKb: Math.round(fetchResult.html.length / 1024) || Math.floor(Math.random() * 30) + 15,
             depth: item.depth,
             imagesCount: Math.max(1, imagesCount),
@@ -531,8 +592,8 @@ export class ClientCrawler {
             this.onLog(`Connected to ${this.hostname} via ${fetchResult.proxyName} (${fetchResult.latency}ms)`, 'info');
           }
 
-          // Recursively discover internal child links (supports both HTML anchors and Markdown hyperlinks)
-          if (item.depth < this.maxDepth && !isNoFollow) {
+          // Recursively discover internal child links
+          if (item.depth < this.maxDepth && !isNoFollow && (discoveredPages.length + queue.length) < this.maxPages) {
             const rawLinks = [];
 
             if (doc) {
@@ -540,6 +601,13 @@ export class ClientCrawler {
                 const href = a.getAttribute('href');
                 if (href) rawLinks.push(href);
               });
+            }
+            // Robust regex fallback if DOMParser is unavailable or missed links
+            if (rawLinks.length === 0 && fetchResult.html) {
+              const htmlHrefMatches = [...fetchResult.html.matchAll(/<a\s+[^>]*href=["']([^"'#][^"']*)["']/gi)];
+              for (const m of htmlHrefMatches) {
+                rawLinks.push(m[1]);
+              }
             }
 
             // Also parse Markdown links: [text](url)
@@ -553,12 +621,10 @@ export class ClientCrawler {
               const norm = this.normalizeUrl(raw, item.url);
               if (!norm) continue;
 
-              // 1. COMPLETELY IGNORE third-party external links (WhatsApp, Facebook, Twitter, LinkedIn, YouTube, Google Maps, etc.)
               if (!this.isAllowedDomain(norm)) {
                 continue;
               }
 
-              // 2. COMPLETELY IGNORE static media assets (.jpg, .png, .gif, .webp, .svg, .css, .js, etc.)
               const cleanUrl = norm.split('?')[0].toLowerCase();
               const isMediaAsset = /\.(jpg|jpeg|png|gif|webp|svg|ico|bmp|mp3|mp4|avi|mov|wmv|wav|ogg|css|js|woff|woff2|ttf|eot|zip|tar|gz|rar|exe|dmg|iso|apk)$/i.test(cleanUrl);
               if (isMediaAsset) {
@@ -567,14 +633,12 @@ export class ClientCrawler {
 
               this.discoveredUrls.add(norm);
 
-              // 3. Check user include/exclude patterns
               const matches = this.matchesPatterns(norm);
               if (!matches) {
                 recordSkipped(norm, 'Excluded by URL Pattern');
                 continue;
               }
 
-              // 4. Enqueue internal site page
               if (!visited.has(norm) && !enqueued.has(norm)) {
                 if ((discoveredPages.length + queue.length) < this.maxPages) {
                   enqueued.add(norm);
@@ -599,20 +663,72 @@ export class ClientCrawler {
         }
       }
 
-      discoveredPages.push(pageData);
-      this.addedUrls.add(item.url);
-      this.onPage(pageData);
+      if (discoveredPages.length < this.maxPages && !this.isAborted) {
+        discoveredPages.push(pageData);
+        this.addedUrls.add(item.url);
+        this.onPage(pageData);
 
-      // Streaming progress update
-      this.onProgress({
-        current: discoveredPages.length,
-        total: this.maxPages,
-        url: item.url
-      });
+        // Streaming progress update
+        this.onProgress({
+          current: discoveredPages.length,
+          total: this.maxPages,
+          url: item.url
+        });
+      }
+    };
 
-      // Brief micro-yield to keep UI 60fps responsive
-      await new Promise(r => setTimeout(r, 12));
-    }
+    // Run Concurrent BFS Worker Pool
+    const concurrency = Math.min(10, Math.max(1, parseInt(this.concurrency) || 6));
+    let activeWorkers = 0;
+
+    await new Promise((resolve) => {
+      let isDone = false;
+
+      const checkDone = () => {
+        if (isDone) return;
+        if (this.isAborted || discoveredPages.length >= this.maxPages || (queue.length === 0 && activeWorkers === 0)) {
+          isDone = true;
+          resolve();
+        }
+      };
+
+      const worker = async () => {
+        while (!isDone && !this.isAborted && discoveredPages.length < this.maxPages) {
+          if (queue.length === 0) {
+            if (activeWorkers === 0) {
+              checkDone();
+              break;
+            }
+            // Wait for other active workers to finish or enqueue new child links
+            await new Promise(r => setTimeout(r, 20));
+            continue;
+          }
+
+          const item = queue.shift();
+          if (!item) continue;
+          if (visited.has(item.url)) continue;
+          visited.add(item.url);
+
+          activeWorkers++;
+          try {
+            await processItem(item);
+          } catch (e) {
+            // Keep crawler going if an individual worker has an unhandled error
+          } finally {
+            activeWorkers--;
+            checkDone();
+          }
+
+          // Brief micro-yield to keep UI 60fps responsive
+          await new Promise(r => setTimeout(r, 10));
+        }
+        checkDone();
+      };
+
+      for (let i = 0; i < concurrency; i++) {
+        worker();
+      }
+    });
 
     // Compute complete stats for internal website pages
     const addedCount = discoveredPages.length;

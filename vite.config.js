@@ -1,7 +1,5 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
-import http from 'http';
-import https from 'https';
 
 // Dev proxy plugin to crawl any website on the internet without CORS restrictions
 function devProxyPlugin() {
@@ -27,65 +25,34 @@ function devProxyPlugin() {
         }
 
         try {
-          const client = target.startsWith('https') ? https : http;
-          const proxyReq = client.get(target, {
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), 8000);
+
+          const upstreamRes = await fetch(target, {
+            method: 'GET',
+            redirect: 'follow',
+            signal: controller.signal,
             headers: {
               'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
               'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
               'Accept-Language': 'en-US,en;q=0.9'
-            },
-            rejectUnauthorized: false,
-            timeout: 8000
-          }, (proxyRes) => {
-            // Follow 3xx redirects
-            if (proxyRes.statusCode >= 300 && proxyRes.statusCode < 400 && proxyRes.headers.location) {
-              const redirectUrl = new URL(proxyRes.headers.location, target).href;
-              const subClient = redirectUrl.startsWith('https') ? https : http;
-              return subClient.get(redirectUrl, {
-                headers: {
-                  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-                  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
-                },
-                timeout: 8000
-              }, (redRes) => {
-                res.statusCode = redRes.statusCode || 200;
-                res.setHeader('Content-Type', redRes.headers['content-type'] || 'text/html');
-                res.setHeader('Access-Control-Allow-Origin', '*');
-                redRes.pipe(res);
-              }).on('error', (err) => {
-                res.statusCode = 502;
-                res.setHeader('Access-Control-Allow-Origin', '*');
-                res.end(JSON.stringify({ error: err.message }));
-              });
-            }
-
-            res.statusCode = proxyRes.statusCode || 200;
-            res.setHeader('Content-Type', proxyRes.headers['content-type'] || 'text/html');
-            res.setHeader('Access-Control-Allow-Origin', '*');
-            proxyRes.pipe(res);
-          });
-
-          proxyReq.on('error', (err) => {
-            if (!res.headersSent) {
-              res.statusCode = 502;
-              res.setHeader('Access-Control-Allow-Origin', '*');
-              res.end(JSON.stringify({ error: err.message }));
             }
           });
+          clearTimeout(timer);
 
-          proxyReq.on('timeout', () => {
-            proxyReq.destroy();
-            if (!res.headersSent) {
-              res.statusCode = 504;
-              res.setHeader('Access-Control-Allow-Origin', '*');
-              res.end(JSON.stringify({ error: 'Gateway Timeout' }));
-            }
-          });
-        } catch (e) {
+          const contentType = upstreamRes.headers.get('content-type') || 'text/html; charset=utf-8';
+          const bodyBuffer = await upstreamRes.arrayBuffer();
+
+          res.statusCode = upstreamRes.status || 200;
+          res.setHeader('Content-Type', contentType);
+          res.setHeader('Access-Control-Allow-Origin', '*');
+          res.end(Buffer.from(bodyBuffer));
+        } catch (err) {
           if (!res.headersSent) {
-            res.statusCode = 500;
+            res.statusCode = err.name === 'AbortError' ? 504 : 502;
+            res.setHeader('Content-Type', 'application/json');
             res.setHeader('Access-Control-Allow-Origin', '*');
-            res.end(JSON.stringify({ error: e.message }));
+            res.end(JSON.stringify({ error: err.message || 'Proxy request failed' }));
           }
         }
       });

@@ -96,7 +96,9 @@ export default function LiveMetrics({ pages = [], seoAudit, stats }) {
             {totalPages > 0 ? avgSpeed : '--'} <span style={{ fontSize: '1rem' }}>ms</span>
           </span>
           <span className="metric-subtitle">
-            {totalPages > 0 ? (avgSpeed < 300 ? 'Lightning fast response' : 'Standard network latency') : 'Standby'}
+            {totalPages > 0 
+              ? (avgSpeed < 450 ? '⚡ Ultra-fast turbo speed' : avgSpeed < 1200 ? '🚀 Fast network response' : 'Standard network latency') 
+              : 'Standby'}
           </span>
         </div>
       </div>

@@ -38,7 +38,7 @@ export default function App() {
   const [crawlConfig, setCrawlConfig] = useState({
     maxPages: 100,
     maxDepth: 4,
-    concurrency: 4,
+    concurrency: 6,
     userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
     respectRobots: true,
     includeImages: true,
