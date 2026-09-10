@@ -8,9 +8,14 @@ import {
   X, 
   ChevronDown, 
   ChevronUp, 
-  RotateCcw 
+  RotateCcw,
+  CheckCircle2,
+  Copy,
+  ExternalLink,
+  ShieldCheck
 } from 'lucide-react';
 import { parseSitemapXml, parseUrlList } from '../utils/sitemapParser';
+import { isLocalEnvironment } from '../utils/clientCrawler';
 
 export default function CrawlerBar({
   targetUrl,
@@ -25,7 +30,85 @@ export default function CrawlerBar({
   addToast
 }) {
   const [showOptions, setShowOptions] = useState(false);
+  const [isTestingProxy, setIsTestingProxy] = useState(false);
+  const [showWorkerGuide, setShowWorkerGuide] = useState(false);
+  const [copiedWorker, setCopiedWorker] = useState(false);
   const fileInputRef = useRef(null);
+  const isLocal = isLocalEnvironment();
+
+  const handleTestProxy = async () => {
+    const proxy = crawlConfig.customCorsProxy?.trim();
+    if (!proxy) {
+      addToast('Please enter a proxy URL to test first.', 'warn');
+      return;
+    }
+    setIsTestingProxy(true);
+    const testTarget = 'https://example.com';
+    const testUrl = proxy.includes('${url}') 
+      ? proxy.replace('${url}', encodeURIComponent(testTarget))
+      : `${proxy}${encodeURIComponent(testTarget)}`;
+
+    try {
+      const c = new AbortController();
+      const t = setTimeout(() => c.abort(), 4500);
+      const res = await fetch(testUrl, { signal: c.signal });
+      clearTimeout(t);
+      if (res.ok) {
+        addToast('Custom proxy verified successfully! Connection is working.', 'success');
+      } else {
+        addToast(`Proxy returned HTTP ${res.status}. Check URL or CORS settings.`, 'warn');
+      }
+    } catch (e) {
+      addToast(`Connection failed: ${e.message}. Ensure proxy sets Access-Control-Allow-Origin: *`, 'error');
+    } finally {
+      setIsTestingProxy(false);
+    }
+  };
+
+  const handleCopyWorkerCode = () => {
+    const code = `export default {
+  async fetch(request) {
+    if (request.method === 'OPTIONS') {
+      return new Response(null, {
+        status: 204,
+        headers: {
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+          'Access-Control-Allow-Headers': '*'
+        }
+      });
+    }
+
+    const url = new URL(request.url).searchParams.get('url');
+    if (!url) return new Response('Missing ?url= param', { status: 400 });
+
+    try {
+      const response = await fetch(url, {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+        }
+      });
+
+      const newHeaders = new Headers(response.headers);
+      newHeaders.set('Access-Control-Allow-Origin', '*');
+      newHeaders.set('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+      newHeaders.set('Access-Control-Allow-Headers', '*');
+
+      return new Response(response.body, {
+        status: response.status,
+        headers: newHeaders
+      });
+    } catch (err) {
+      return new Response(err.message, { status: 502 });
+    }
+  }
+};`;
+    navigator.clipboard.writeText(code);
+    setCopiedWorker(true);
+    addToast('Cloudflare Worker code copied to clipboard!', 'success');
+    setTimeout(() => setCopiedWorker(false), 3000);
+  };
 
   const handleFileUpload = (e) => {
     const file = e.target.files?.[0];
@@ -175,6 +258,47 @@ export default function CrawlerBar({
         {/* Collapsible Advanced Crawl Settings */}
         {showOptions && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', paddingTop: '1.25rem', borderTop: '1px solid var(--border-subtle)', animation: 'fadeIn 0.25s ease' }}>
+            {/* Environment Status Badge */}
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              background: isLocal ? 'rgba(16, 185, 129, 0.08)' : 'rgba(6, 182, 212, 0.08)',
+              border: `1px solid ${isLocal ? 'rgba(16, 185, 129, 0.25)' : 'rgba(6, 182, 212, 0.25)'}`,
+              borderRadius: '8px',
+              padding: '0.65rem 1rem',
+              fontSize: '0.8rem',
+              gap: '0.5rem',
+              flexWrap: 'wrap'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <span style={{
+                  width: '8px',
+                  height: '8px',
+                  borderRadius: '50%',
+                  background: isLocal ? 'var(--accent-emerald)' : 'var(--accent-cyan)',
+                  boxShadow: `0 0 8px ${isLocal ? 'var(--accent-emerald)' : 'var(--accent-cyan)'}`,
+                  display: 'inline-block'
+                }} />
+                <span style={{ fontWeight: 700, color: 'var(--text-primary)' }}>
+                  {isLocal ? 'Local Server Mode' : 'Live Client-Side Mode (GitHub Pages)'}
+                </span>
+                <span style={{ color: 'var(--text-muted)' }}>—</span>
+                <span style={{ color: 'var(--text-secondary)' }}>
+                  {isLocal 
+                    ? 'Using Vite dev server Node proxy (unrestricted direct crawl access)' 
+                    : 'Using multi-tier resilient proxy fleet (CORS.lol + Jina Engine with auto-failover)'}
+                </span>
+              </div>
+              <span className="badge" style={{ 
+                background: isLocal ? 'rgba(16, 185, 129, 0.2)' : 'rgba(6, 182, 212, 0.2)',
+                color: isLocal ? 'var(--accent-emerald)' : 'var(--accent-cyan)',
+                fontSize: '0.72rem'
+              }}>
+                {isLocal ? 'Zero CORS Limits' : 'CORS Auto-Bypass Active'}
+              </span>
+            </div>
+
             {/* Sliders & Configuration Grid */}
             <div className="advanced-options-grid">
               {/* Max Pages Limit (up to 1000) */}
@@ -357,23 +481,70 @@ export default function CrawlerBar({
             </div>
 
             {/* Custom Proxy Optional Input */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', background: 'rgba(255, 255, 255, 0.02)', padding: '0.75rem 1rem', borderRadius: '8px', border: '1px solid var(--border-subtle)' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <label className="option-label" style={{ fontSize: '0.8rem', fontWeight: 600 }}>
-                  Custom CORS Proxy Endpoint (Optional Fallback)
-                </label>
-                <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
-                  e.g. Cloudflare Worker or private proxy
-                </span>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem', background: 'rgba(255, 255, 255, 0.02)', padding: '0.85rem 1rem', borderRadius: '8px', border: '1px solid var(--border-subtle)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                  <ShieldCheck size={16} className="text-cyan" />
+                  <label className="option-label" style={{ fontSize: '0.82rem', fontWeight: 600 }}>
+                    Custom CORS Proxy Endpoint (Optional)
+                  </label>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowWorkerGuide(!showWorkerGuide)}
+                  style={{ background: 'transparent', border: 'none', color: 'var(--accent-cyan)', fontSize: '0.75rem', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.25rem', padding: 0 }}
+                >
+                  <span>100% Free Cloudflare Worker Guide</span>
+                  <ChevronDown size={12} style={{ transform: showWorkerGuide ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }} />
+                </button>
               </div>
-              <input 
-                type="text" 
-                className="url-input-field"
-                style={{ fontSize: '0.82rem', padding: '0.45rem 0.75rem', background: 'rgba(0, 0, 0, 0.25)', borderRadius: '6px', border: '1px solid var(--border-subtle)', fontFamily: 'var(--font-mono)' }}
-                placeholder="https://your-worker.workers.dev/?url="
-                value={crawlConfig.customCorsProxy || ''}
-                onChange={(e) => setCrawlConfig({ ...crawlConfig, customCorsProxy: e.target.value })}
-              />
+
+              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                <input 
+                  type="text" 
+                  className="url-input-field"
+                  style={{ flex: 1, fontSize: '0.82rem', padding: '0.45rem 0.75rem', background: 'rgba(0, 0, 0, 0.25)', borderRadius: '6px', border: '1px solid var(--border-subtle)', fontFamily: 'var(--font-mono)' }}
+                  placeholder="https://your-worker.workers.dev/?url="
+                  value={crawlConfig.customCorsProxy || ''}
+                  onChange={(e) => setCrawlConfig({ ...crawlConfig, customCorsProxy: e.target.value })}
+                />
+                {crawlConfig.customCorsProxy && (
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    style={{ padding: '0.45rem 0.75rem', fontSize: '0.78rem', whiteSpace: 'nowrap' }}
+                    onClick={handleTestProxy}
+                    disabled={isTestingProxy}
+                  >
+                    {isTestingProxy ? 'Testing...' : 'Test Connection'}
+                  </button>
+                )}
+              </div>
+
+              {showWorkerGuide && (
+                <div style={{ background: 'rgba(0,0,0,0.35)', padding: '0.8rem 1rem', borderRadius: '6px', border: '1px solid var(--border-subtle)', fontSize: '0.78rem', display: 'flex', flexDirection: 'column', gap: '0.5rem', animation: 'fadeIn 0.2s ease' }}>
+                  <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
+                    Deploy your own private, unlimited CORS proxy in 60 seconds (100,000 requests/day free):
+                  </div>
+                  <ol style={{ paddingLeft: '1.2rem', color: 'var(--text-secondary)', lineHeight: 1.5, margin: 0 }}>
+                    <li>Log into <a href="https://workers.cloudflare.com" target="_blank" rel="noreferrer" style={{ color: 'var(--accent-cyan)' }}>Cloudflare Workers</a> (free).</li>
+                    <li>Click <b>Create Application</b> &gt; <b>Create Worker</b>.</li>
+                    <li>Replace worker code with the snippet below and click <b>Deploy</b>.</li>
+                    <li>Copy your worker URL (e.g. <code>https://my-proxy.workers.dev/?url=</code>) and paste it in the box above!</li>
+                  </ol>
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '0.25rem' }}>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      style={{ fontSize: '0.75rem', padding: '0.3rem 0.6rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}
+                      onClick={handleCopyWorkerCode}
+                    >
+                      {copiedWorker ? <CheckCircle2 size={13} className="text-emerald" /> : <Copy size={13} />}
+                      <span>{copiedWorker ? 'Copied to Clipboard!' : 'Copy Cloudflare Worker Code'}</span>
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* URL Inclusion/Exclusion Patterns Grid */}

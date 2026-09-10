@@ -1,6 +1,12 @@
 // Universal Client-Side Web Crawler & Discovery Engine
 // Crawls ANY website dynamically via recursive BFS link extraction, SEO parsing, and streaming progress
 
+export function isLocalEnvironment() {
+  if (typeof window === 'undefined') return true;
+  const host = window.location.hostname;
+  return host === 'localhost' || host === '127.0.0.1' || host === '[::1]' || host.endsWith('.local');
+}
+
 const JINA_TURBO_HEADERS = {
   'X-Return-Format': 'html',
   'X-Wait-For-Selector': 'none',
@@ -14,7 +20,15 @@ export class ClientCrawler {
     this.targetUrl = options.url ? this.normalizeUrl(options.url) : '';
     this.maxPages = Math.max(1, parseInt(options.maxPages) || 100);
     this.maxDepth = Math.max(1, parseInt(options.maxDepth) || 4);
-    this.concurrency = Math.min(10, Math.max(1, parseInt(options.concurrency) || 6));
+    
+    const isLocal = isLocalEnvironment();
+    const requestedConcurrency = parseInt(options.concurrency) || 6;
+    // On live static hosting (GitHub Pages), use polite concurrency (default 2-3) and a small delay to prevent triggering public proxy 429s
+    this.concurrency = isLocal 
+      ? Math.min(10, Math.max(1, requestedConcurrency))
+      : Math.min(3, Math.max(1, requestedConcurrency));
+    this.requestDelayMs = isLocal ? 0 : 200;
+
     this.useCorsProxy = options.useCorsProxy !== false;
     this.customCorsProxy = options.customCorsProxy ? options.customCorsProxy.trim() : '';
     this.restrictToPath = options.restrictToPath === true;
@@ -189,39 +203,71 @@ export class ClientCrawler {
   async detectBestEngine(testUrl) {
     if (this.preferredProxy) return this.preferredProxy;
 
+    // 0. User custom proxy
     if (this.customCorsProxy) {
       this.preferredProxy = { type: 'custom', urlTemplate: this.customCorsProxy };
       return this.preferredProxy;
     }
 
-    // 1. Probe local dev proxy with 500ms timeout
-    try {
-      const probeRes = await this.tryFetchEndpoint(`/api/proxy?url=${encodeURIComponent(testUrl)}`, {}, 500);
-      if (probeRes && probeRes.ok) {
-        const text = await probeRes.text();
-        if (text && text.length > 20 && !text.includes('{"error":')) {
-          this.preferredProxy = { type: 'dev' };
-          return this.preferredProxy;
+    // 1. Local Vite dev server proxy (ONLY active on localhost)
+    if (isLocalEnvironment()) {
+      try {
+        const probeRes = await this.tryFetchEndpoint(`/api/proxy?url=${encodeURIComponent(testUrl)}`, {}, 1000);
+        if (probeRes && probeRes.ok) {
+          const text = await probeRes.text();
+          if (text && text.length > 20 && !text.includes('{"error":')) {
+            this.preferredProxy = { type: 'dev' };
+            return this.preferredProxy;
+          }
         }
-      }
-    } catch (e) {}
+      } catch (e) {}
+    }
 
-    // 2. Probe direct fetch with 500ms timeout
+    // 2. Direct fetch (works if target site sets Access-Control-Allow-Origin: *)
     try {
-      const dirRes = await this.tryFetchEndpoint(testUrl, {}, 500);
+      const dirRes = await this.tryFetchEndpoint(testUrl, {}, 800);
       if (dirRes && dirRes.ok) {
         this.preferredProxy = { type: 'direct' };
         return this.preferredProxy;
       }
     } catch (e) {}
 
-    // 3. Fallback to Turbo Jina Engine
-    this.preferredProxy = { type: 'jina_html' };
-    return this.preferredProxy;
+    // 3. Probe CORS Proxy Fleet (cors.lol, Jina HTML, Jina MD)
+    if (this.useCorsProxy) {
+      // Probe fast HTML proxy (api.cors.lol)
+      try {
+        const probe = await this.tryFetchEndpoint(`https://api.cors.lol/?url=${encodeURIComponent(testUrl)}`, {}, 2000);
+        if (probe && probe.ok) {
+          const text = await probe.text();
+          if (text && text.length > 30 && !text.includes('{"error":') && probe.status !== 429) {
+            this.preferredProxy = { type: 'cors_lol' };
+            return this.preferredProxy;
+          }
+        }
+      } catch (e) {}
+
+      // Probe Jina HTML
+      try {
+        const probe = await this.tryFetchEndpoint(`https://r.jina.ai/${testUrl}`, JINA_TURBO_HEADERS, 2500);
+        if (probe && probe.ok) {
+          const text = await probe.text();
+          if (text && text.length > 30 && !text.includes('{"error":') && probe.status !== 429) {
+            this.preferredProxy = { type: 'jina_html' };
+            return this.preferredProxy;
+          }
+        }
+      } catch (e) {}
+
+      // Default fallback: Jina Markdown
+      this.preferredProxy = { type: 'jina_md' };
+      return this.preferredProxy;
+    }
+
+    return null;
   }
 
   // Universal multi-tier fetch pipeline:
-  // Session Cache -> Preferred Proxy -> Custom User Proxy -> Dev Proxy -> Direct Fetch -> Turbo Jina Reader -> Codetabs Fallback
+  // Session Cache -> Preferred Proxy -> Custom User Proxy -> Dev Proxy (localhost only) -> Direct Fetch -> Fast CORS Engine -> Turbo Jina Reader HTML -> Turbo Jina Reader MD
   async fetchPageHtml(url) {
     if (this.cache.has(url)) {
       return this.cache.get(url);
@@ -236,6 +282,9 @@ export class ClientCrawler {
         if (cachedRes && cachedRes.ok) {
           this.cache.set(url, cachedRes);
           return cachedRes;
+        } else {
+          // If the preferred proxy fails or returns 429, invalidate it so we fail over
+          this.preferredProxy = null;
         }
       } catch (e) {
         this.preferredProxy = null;
@@ -262,25 +311,27 @@ export class ClientCrawler {
       } catch (e) {}
     }
 
-    // 2. Built-in local dev proxy endpoint (active in Vite dev server)
-    try {
-      const devProxyUrl = `/api/proxy?url=${encodeURIComponent(url)}`;
-      const resp = await this.tryFetchEndpoint(devProxyUrl, {}, 2500);
-      if (resp && resp.ok) {
-        const html = await resp.text();
-        if (html && html.length > 20 && !html.includes('{"error":')) {
-          const latency = Math.round(performance.now() - startTime);
-          this.preferredProxy = { type: 'dev' };
-          const res = { ok: true, status: resp.status, latency, html, proxyName: 'Dev Server Proxy' };
-          this.cache.set(url, res);
-          return res;
+    // 2. Built-in local dev proxy endpoint (ONLY on localhost dev server)
+    if (isLocalEnvironment()) {
+      try {
+        const devProxyUrl = `/api/proxy?url=${encodeURIComponent(url)}`;
+        const resp = await this.tryFetchEndpoint(devProxyUrl, {}, 2500);
+        if (resp && resp.ok) {
+          const html = await resp.text();
+          if (html && html.length > 20 && !html.includes('{"error":')) {
+            const latency = Math.round(performance.now() - startTime);
+            this.preferredProxy = { type: 'dev' };
+            const res = { ok: true, status: resp.status, latency, html, proxyName: 'Dev Server Proxy' };
+            this.cache.set(url, res);
+            return res;
+          }
         }
-      }
-    } catch (e) {}
+      } catch (e) {}
+    }
 
     // 3. Direct fetch (works if target site enables CORS headers or same-origin)
     try {
-      const resp = await this.tryFetchEndpoint(url, {}, 1500);
+      const resp = await this.tryFetchEndpoint(url, {}, 1000);
       if (resp && resp.ok) {
         const html = await resp.text();
         const latency = Math.round(performance.now() - startTime);
@@ -293,13 +344,29 @@ export class ClientCrawler {
 
     // 4. Public CORS Proxy Fleet (when CORS proxy fallback is enabled)
     if (this.useCorsProxy) {
-      // Tier A: Turbo Jina Reader HTML mode (ultra-fast no-wait headers, responds in ~350-500ms)
+      // Tier A: Fast HTML Proxy (cors.lol)
       try {
-        const jinaUrl = `https://r.jina.ai/${url}`;
-        const resp = await this.tryFetchEndpoint(jinaUrl, JINA_TURBO_HEADERS, 5000);
+        const lolUrl = `https://api.cors.lol/?url=${encodeURIComponent(url)}`;
+        const resp = await this.tryFetchEndpoint(lolUrl, {}, 3000);
         if (resp && resp.ok) {
           const html = await resp.text();
-          if (html && html.length > 50 && !html.includes('{"error":')) {
+          if (html && html.length > 30 && !html.includes('{"error":') && resp.status !== 429) {
+            const latency = Math.round(performance.now() - startTime);
+            this.preferredProxy = { type: 'cors_lol' };
+            const res = { ok: true, status: 200, latency, html, proxyName: 'CORS Engine (Fast)' };
+            this.cache.set(url, res);
+            return res;
+          }
+        }
+      } catch (e) {}
+
+      // Tier B: Turbo Jina Reader HTML mode
+      try {
+        const jinaUrl = `https://r.jina.ai/${url}`;
+        const resp = await this.tryFetchEndpoint(jinaUrl, JINA_TURBO_HEADERS, 4000);
+        if (resp && resp.ok) {
+          const html = await resp.text();
+          if (html && html.length > 50 && !html.includes('{"error":') && !html.includes('AbuseAlleviationError') && resp.status !== 429) {
             const latency = Math.round(performance.now() - startTime);
             this.preferredProxy = { type: 'jina_html' };
             const res = { ok: true, status: 200, latency, html, proxyName: 'Turbo Engine (HTML)' };
@@ -309,32 +376,16 @@ export class ClientCrawler {
         }
       } catch (e) {}
 
-      // Tier B: Turbo Jina Reader Standard mode (simple GET without custom headers)
+      // Tier C: Turbo Jina Reader Standard Markdown mode
       try {
         const jinaUrl = `https://r.jina.ai/${url}`;
-        const resp = await this.tryFetchEndpoint(jinaUrl, { 'X-Wait-For-Selector': 'none', 'X-Timeout': '5' }, 5000);
+        const resp = await this.tryFetchEndpoint(jinaUrl, {}, 4000);
         if (resp && resp.ok) {
           const text = await resp.text();
-          if (text && text.length > 50) {
+          if (text && text.length > 50 && !text.includes('{"error":') && !text.includes('AbuseAlleviationError') && resp.status !== 429) {
             const latency = Math.round(performance.now() - startTime);
             this.preferredProxy = { type: 'jina_md' };
             const res = { ok: true, status: 200, latency, html: text, isMarkdown: true, proxyName: 'Turbo Engine (Markdown)' };
-            this.cache.set(url, res);
-            return res;
-          }
-        }
-      } catch (e) {}
-
-      // Tier C: Codetabs Fallback
-      try {
-        const codetabsUrl = `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`;
-        const resp = await this.tryFetchEndpoint(codetabsUrl, {}, 2500);
-        if (resp && resp.ok) {
-          const html = await resp.text();
-          if (html && html.length > 50) {
-            const latency = Math.round(performance.now() - startTime);
-            this.preferredProxy = { type: 'codetabs' };
-            const res = { ok: true, status: 200, latency, html, proxyName: 'Codetabs' };
             this.cache.set(url, res);
             return res;
           }
@@ -374,33 +425,33 @@ export class ClientCrawler {
         }
       }
     } else if (pref.type === 'direct') {
-      const resp = await this.tryFetchEndpoint(url, {}, 1500);
+      const resp = await this.tryFetchEndpoint(url, {}, 1000);
       if (resp && resp.ok) {
         const html = await resp.text();
         return { ok: true, status: resp.status, latency: Math.round(performance.now() - startTime), html, proxyName: 'Direct Connection' };
       }
-    } else if (pref.type === 'jina_html') {
-      const resp = await this.tryFetchEndpoint(`https://r.jina.ai/${url}`, JINA_TURBO_HEADERS, 4500);
+    } else if (pref.type === 'cors_lol') {
+      const resp = await this.tryFetchEndpoint(`https://api.cors.lol/?url=${encodeURIComponent(url)}`, {}, 3000);
       if (resp && resp.ok) {
         const html = await resp.text();
-        if (html && html.length > 50 && !html.includes('{"error":')) {
+        if (html && html.length > 30 && !html.includes('{"error":') && resp.status !== 429) {
+          return { ok: true, status: 200, latency: Math.round(performance.now() - startTime), html, proxyName: 'CORS Engine (Fast)' };
+        }
+      }
+    } else if (pref.type === 'jina_html') {
+      const resp = await this.tryFetchEndpoint(`https://r.jina.ai/${url}`, JINA_TURBO_HEADERS, 4000);
+      if (resp && resp.ok) {
+        const html = await resp.text();
+        if (html && html.length > 50 && !html.includes('{"error":') && !html.includes('AbuseAlleviationError') && resp.status !== 429) {
           return { ok: true, status: 200, latency: Math.round(performance.now() - startTime), html, proxyName: 'Turbo Engine (HTML)' };
         }
       }
     } else if (pref.type === 'jina_md') {
-      const resp = await this.tryFetchEndpoint(`https://r.jina.ai/${url}`, { 'X-Wait-For-Selector': 'none', 'X-Timeout': '5' }, 4500);
+      const resp = await this.tryFetchEndpoint(`https://r.jina.ai/${url}`, {}, 4000);
       if (resp && resp.ok) {
         const text = await resp.text();
-        if (text && text.length > 50) {
+        if (text && text.length > 50 && !text.includes('{"error":') && !text.includes('AbuseAlleviationError') && resp.status !== 429) {
           return { ok: true, status: 200, latency: Math.round(performance.now() - startTime), html: text, isMarkdown: true, proxyName: 'Turbo Engine (Markdown)' };
-        }
-      }
-    } else if (pref.type === 'codetabs') {
-      const resp = await this.tryFetchEndpoint(`https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`, {}, 2500);
-      if (resp && resp.ok) {
-        const html = await resp.text();
-        if (html && html.length > 50) {
-          return { ok: true, status: 200, latency: Math.round(performance.now() - startTime), html, proxyName: 'Codetabs' };
         }
       }
     }
@@ -523,6 +574,11 @@ export class ClientCrawler {
     const processItem = async (item) => {
       if (this.isAborted || discoveredPages.length >= this.maxPages) return;
 
+      if (this.requestDelayMs > 0 && item.depth > 0) {
+        await new Promise(r => setTimeout(r, this.requestDelayMs));
+      }
+      if (this.isAborted || discoveredPages.length >= this.maxPages) return;
+
       const fetchResult = await this.fetchPageHtml(item.url);
       if (this.isAborted) return;
 
@@ -611,9 +667,12 @@ export class ClientCrawler {
             }
 
             // Also parse Markdown links: [text](url)
-            const mdMatches = [...fetchResult.html.matchAll(/\[([^\]]*)\]\((https?:\/\/[^\s\)\'\"]+|[^)]+\.(?:html|php|htm|aspx|jsp)[^)]*)\)/gi)];
+            const mdMatches = [...fetchResult.html.matchAll(/\[(?:[^\]]*)\]\(([^)\s"']+)(?:\s+["'][^"']*["'])?\)/gi)];
             for (const m of mdMatches) {
-              rawLinks.push(m[2]);
+              const urlCandidate = m[1]?.trim();
+              if (urlCandidate && !urlCandidate.startsWith('data:') && !urlCandidate.startsWith('blob:')) {
+                rawLinks.push(urlCandidate);
+              }
             }
 
             for (const raw of rawLinks) {
