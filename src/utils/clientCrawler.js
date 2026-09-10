@@ -24,10 +24,8 @@ export class ClientCrawler {
     const isLocal = isLocalEnvironment();
     const requestedConcurrency = parseInt(options.concurrency) || 6;
     // On live static hosting (GitHub Pages), use polite concurrency (default 2-3) and a small delay to prevent triggering public proxy 429s
-    this.concurrency = isLocal 
-      ? Math.min(10, Math.max(1, requestedConcurrency))
-      : Math.min(3, Math.max(1, requestedConcurrency));
-    this.requestDelayMs = isLocal ? 0 : 200;
+    this.concurrency = Math.min(8, Math.max(1, requestedConcurrency));
+    this.requestDelayMs = 50;
 
     this.useCorsProxy = options.useCorsProxy !== false;
     this.customCorsProxy = options.customCorsProxy ? options.customCorsProxy.trim() : '';
@@ -347,7 +345,7 @@ export class ClientCrawler {
       // Tier A: Fast HTML Proxy (cors.lol)
       try {
         const lolUrl = `https://api.cors.lol/?url=${encodeURIComponent(url)}`;
-        const resp = await this.tryFetchEndpoint(lolUrl, {}, 3000);
+        const resp = await this.tryFetchEndpoint(lolUrl, {}, 2000);
         if (resp && resp.ok) {
           const html = await resp.text();
           if (html && html.length > 30 && !html.includes('{"error":') && resp.status !== 429) {
@@ -363,7 +361,7 @@ export class ClientCrawler {
       // Tier B: Turbo Jina Reader HTML mode
       try {
         const jinaUrl = `https://r.jina.ai/${url}`;
-        const resp = await this.tryFetchEndpoint(jinaUrl, JINA_TURBO_HEADERS, 4000);
+        const resp = await this.tryFetchEndpoint(jinaUrl, JINA_TURBO_HEADERS, 2500);
         if (resp && resp.ok) {
           const html = await resp.text();
           if (html && html.length > 50 && !html.includes('{"error":') && !html.includes('AbuseAlleviationError') && resp.status !== 429) {
@@ -379,7 +377,7 @@ export class ClientCrawler {
       // Tier C: Turbo Jina Reader Standard Markdown mode
       try {
         const jinaUrl = `https://r.jina.ai/${url}`;
-        const resp = await this.tryFetchEndpoint(jinaUrl, {}, 4000);
+        const resp = await this.tryFetchEndpoint(jinaUrl, {}, 2500);
         if (resp && resp.ok) {
           const text = await resp.text();
           if (text && text.length > 50 && !text.includes('{"error":') && !text.includes('AbuseAlleviationError') && resp.status !== 429) {
