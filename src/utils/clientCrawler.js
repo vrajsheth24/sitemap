@@ -40,8 +40,21 @@ export class ClientCrawler {
   normalizeUrl(rawUrl, baseUrl = null) {
     try {
       let resolved;
-      if (baseUrl) {
-        resolved = new URL(rawUrl, baseUrl);
+      let effectiveBase = baseUrl;
+      if (effectiveBase && typeof effectiveBase === 'string') {
+        try {
+          const baseObj = new URL(effectiveBase);
+          const isFile = /\.[a-z0-9]{2,5}$/i.test(baseObj.pathname);
+          // If the base URL is a directory path without a trailing slash, ensure it ends with '/' so relative links resolve correctly
+          if (!isFile && !baseObj.pathname.endsWith('/')) {
+            baseObj.pathname += '/';
+            effectiveBase = baseObj.href;
+          }
+        } catch (e) {}
+      }
+
+      if (effectiveBase) {
+        resolved = new URL(rawUrl, effectiveBase);
       } else {
         resolved = new URL(rawUrl.startsWith('http') ? rawUrl : `https://${rawUrl}`);
       }
@@ -53,7 +66,11 @@ export class ClientCrawler {
       resolved.hash = '';
 
       let path = resolved.pathname;
-      if (path.length > 1 && path.endsWith('/')) {
+      const isFile = /\.[a-z0-9]{2,5}$/i.test(path);
+      // Remove trailing slash if accidentally attached to a file URL (e.g. index.html/)
+      if (isFile && path.endsWith('/')) {
+        resolved.pathname = path.slice(0, -1);
+      } else if (!isFile && path.length > 1 && path.endsWith('/')) {
         resolved.pathname = path.slice(0, -1);
       }
 
@@ -163,7 +180,7 @@ export class ClientCrawler {
 
       for (const target of proxies) {
         const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 2000);
+        const timeout = setTimeout(() => controller.abort(), 4500);
         try {
           const resp = await fetch(target, { signal: controller.signal });
           clearTimeout(timeout);
@@ -271,7 +288,19 @@ export class ClientCrawler {
       }
     };
 
-    const rootUrl = this.targetUrl.endsWith('/') ? this.targetUrl : `${this.targetUrl}/`;
+    let rootUrl = this.targetUrl;
+    try {
+      const parsedRoot = new URL(this.targetUrl);
+      const isFileUrl = /\.[a-z0-9]{2,5}$/i.test(parsedRoot.pathname);
+      // Only append trailing slash if it's a domain/directory, not a file (.html, .php, etc.)
+      if (!isFileUrl && !rootUrl.endsWith('/')) {
+        rootUrl = `${rootUrl}/`;
+      }
+    } catch (e) {
+      if (!rootUrl.endsWith('/')) {
+        rootUrl = `${rootUrl}/`;
+      }
+    }
     this.discoveredUrls.add(rootUrl);
 
     const queue = [{ url: rootUrl, depth: 0 }];

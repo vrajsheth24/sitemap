@@ -9,12 +9,20 @@ function devProxyPlugin() {
     name: 'dev-cors-proxy',
     configureServer(server) {
       server.middlewares.use('/api/proxy', async (req, res) => {
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+        res.setHeader('Access-Control-Allow-Headers', '*');
+
+        if (req.method === 'OPTIONS') {
+          res.statusCode = 204;
+          return res.end();
+        }
+
         const urlObj = new URL(req.url, 'http://localhost:5173');
         const target = urlObj.searchParams.get('url');
         if (!target) {
           res.statusCode = 400;
           res.setHeader('Content-Type', 'application/json');
-          res.setHeader('Access-Control-Allow-Origin', '*');
           return res.end(JSON.stringify({ error: 'Missing url parameter' }));
         }
 
@@ -26,6 +34,7 @@ function devProxyPlugin() {
               'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
               'Accept-Language': 'en-US,en;q=0.9'
             },
+            rejectUnauthorized: false,
             timeout: 8000
           }, (proxyRes) => {
             // Follow 3xx redirects
