@@ -345,6 +345,35 @@ export default function CrawlerBar({
                 />
                 <span>CORS Proxy Fallback</span>
               </label>
+
+              <label className="toggle-control" title="Stay inside starting URL path/folder (e.g. /Dev/phrtax.cpa/L1/)">
+                <input 
+                  type="checkbox" 
+                  checked={crawlConfig.restrictToPath === true}
+                  onChange={(e) => setCrawlConfig({ ...crawlConfig, restrictToPath: e.target.checked })}
+                />
+                <span>Stay within Starting Subdirectory</span>
+              </label>
+            </div>
+
+            {/* Custom Proxy Optional Input */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', background: 'rgba(255, 255, 255, 0.02)', padding: '0.75rem 1rem', borderRadius: '8px', border: '1px solid var(--border-subtle)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <label className="option-label" style={{ fontSize: '0.8rem', fontWeight: 600 }}>
+                  Custom CORS Proxy Endpoint (Optional Fallback)
+                </label>
+                <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                  e.g. Cloudflare Worker or private proxy
+                </span>
+              </div>
+              <input 
+                type="text" 
+                className="url-input-field"
+                style={{ fontSize: '0.82rem', padding: '0.45rem 0.75rem', background: 'rgba(0, 0, 0, 0.25)', borderRadius: '6px', border: '1px solid var(--border-subtle)', fontFamily: 'var(--font-mono)' }}
+                placeholder="https://your-worker.workers.dev/?url="
+                value={crawlConfig.customCorsProxy || ''}
+                onChange={(e) => setCrawlConfig({ ...crawlConfig, customCorsProxy: e.target.value })}
+              />
             </div>
 
             {/* URL Inclusion/Exclusion Patterns Grid */}

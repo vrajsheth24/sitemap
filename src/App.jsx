@@ -46,7 +46,9 @@ export default function App() {
     filterNoindex: true,
     excludePatterns: '',
     includePatterns: '',
-    useCorsProxy: true
+    useCorsProxy: true,
+    customCorsProxy: '',
+    restrictToPath: false
   });
 
   const crawlerRef = useRef(null);
@@ -62,7 +64,7 @@ export default function App() {
     setToasts(prev => [...prev, { id, message, type }]);
     setTimeout(() => {
       setToasts(prev => prev.filter(t => t.id !== id));
-    }, 3800);
+    }, 4500);
   };
 
   const removeToast = (id) => {
@@ -119,6 +121,8 @@ export default function App() {
       excludePatterns: crawlConfig.excludePatterns,
       includePatterns: crawlConfig.includePatterns,
       useCorsProxy: crawlConfig.useCorsProxy,
+      customCorsProxy: crawlConfig.customCorsProxy,
+      restrictToPath: crawlConfig.restrictToPath,
       onPage: (newPage) => {
         setPages(prev => {
           // Avoid duplicate URLs
@@ -137,7 +141,6 @@ export default function App() {
         });
       },
       onLog: (msg, type) => {
-        // Log feedback can trigger brief info toast for important discovery
         if (type === 'error') {
           addToast(msg, 'error');
         }
@@ -152,17 +155,31 @@ export default function App() {
         setIsCrawling(false);
         setCompletionStats(stats);
         setSkippedPages(stats.skippedPages || discoveredResult?.skippedPages || []);
-        const completionMsg = stats.skipped > 0 
-          ? `Crawl complete — ${discovered.length} pages added to sitemap (${stats.skipped} skipped)`
-          : `Crawl complete — ${discovered.length} pages added to sitemap`;
-        setCrawlProgress({
-          current: discovered.length,
-          total: discovered.length,
-          percent: 100,
-          currentUrl: completionMsg,
-          status: 'completed'
-        });
-        addToast(`Crawl finished! ${discovered.length} pages added to sitemap.`, 'success');
+
+        const isSingleFailed = discovered.length === 1 && discovered[0]?.fetchFailed;
+
+        if (isSingleFailed) {
+          setCrawlProgress({
+            current: 1,
+            total: 1,
+            percent: 100,
+            currentUrl: `Warning: Unable to fetch page content cross-origin. Check URL or configure a custom CORS proxy in Options.`,
+            status: 'warning'
+          });
+          addToast('Could not fetch page content via CORS proxies. Please check target URL or add a custom proxy in Options.', 'warn');
+        } else {
+          const completionMsg = stats.skipped > 0 
+            ? `Crawl complete — ${discovered.length} pages added to sitemap (${stats.skipped} skipped)`
+            : `Crawl complete — ${discovered.length} pages added to sitemap`;
+          setCrawlProgress({
+            current: discovered.length,
+            total: discovered.length,
+            percent: 100,
+            currentUrl: completionMsg,
+            status: 'completed'
+          });
+          addToast(`Crawl finished! ${discovered.length} pages added to sitemap.`, 'success');
+        }
       }
     });
 

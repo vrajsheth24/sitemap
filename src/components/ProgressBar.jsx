@@ -1,5 +1,5 @@
 import React from 'react';
-import { CheckCircle2, Loader2 } from 'lucide-react';
+import { CheckCircle2, AlertTriangle } from 'lucide-react';
 
 export default function ProgressBar({ progress, isCrawling }) {
   if (!progress || (!isCrawling && progress.status === 'idle')) {
@@ -8,6 +8,7 @@ export default function ProgressBar({ progress, isCrawling }) {
 
   const { current = 0, total = 100, percent = 0, currentUrl = '', status = 'crawling' } = progress;
   const isDone = !isCrawling && status === 'completed';
+  const isWarning = !isCrawling && status === 'warning';
 
   return (
     <div className="glass-panel" style={{ padding: '1rem 1.25rem', display: 'flex', flexDirection: 'column', gap: '0.65rem', animation: 'fadeIn 0.25s ease' }}>
@@ -16,6 +17,8 @@ export default function ProgressBar({ progress, isCrawling }) {
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', minWidth: 0, flex: 1 }}>
           {isDone ? (
             <CheckCircle2 size={16} className="text-emerald" />
+          ) : isWarning ? (
+            <AlertTriangle size={16} style={{ color: 'var(--accent-amber, #f59e0b)' }} />
           ) : (
             <span 
               className="status-dot crawling" 
@@ -23,14 +26,24 @@ export default function ProgressBar({ progress, isCrawling }) {
             />
           )}
 
-          <span style={{ fontSize: '0.85rem', fontWeight: 700, color: isDone ? 'var(--accent-emerald)' : 'var(--accent-cyan)' }}>
-            {isDone ? 'Crawl Finished:' : 'Live Crawling:'}
+          <span 
+            style={{ 
+              fontSize: '0.85rem', 
+              fontWeight: 700, 
+              color: isDone 
+                ? 'var(--accent-emerald)' 
+                : isWarning 
+                  ? 'var(--accent-amber, #f59e0b)' 
+                  : 'var(--accent-cyan)' 
+            }}
+          >
+            {isDone ? 'Crawl Finished:' : isWarning ? 'Crawl Notice:' : 'Live Crawling:'}
           </span>
 
           <span 
             style={{ 
               fontSize: '0.85rem', 
-              color: 'var(--text-secondary)', 
+              color: isWarning ? 'var(--accent-amber, #f59e0b)' : 'var(--text-secondary)', 
               fontFamily: 'var(--font-mono)',
               overflow: 'hidden', 
               textOverflow: 'ellipsis', 
@@ -51,14 +64,22 @@ export default function ProgressBar({ progress, isCrawling }) {
           <span 
             className="badge" 
             style={{ 
-              background: isDone ? 'rgba(16, 185, 129, 0.2)' : 'rgba(6, 182, 212, 0.2)', 
-              color: isDone ? 'var(--accent-emerald)' : 'var(--accent-cyan)',
+              background: isDone 
+                ? 'rgba(16, 185, 129, 0.2)' 
+                : isWarning 
+                  ? 'rgba(245, 158, 11, 0.2)' 
+                  : 'rgba(6, 182, 212, 0.2)', 
+              color: isDone 
+                ? 'var(--accent-emerald)' 
+                : isWarning 
+                  ? 'var(--accent-amber, #f59e0b)' 
+                  : 'var(--accent-cyan)',
               fontWeight: 800,
               fontSize: '0.8rem',
               padding: '0.2rem 0.55rem'
             }}
           >
-            {isDone ? '100%' : `${percent}%`}
+            {isDone ? '100%' : isWarning ? 'Check CORS' : `${percent}%`}
           </span>
         </div>
       </div>
