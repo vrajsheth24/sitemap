@@ -1,6 +1,8 @@
 // Universal Client-Side Web Crawler & Discovery Engine
 // Crawls ANY website dynamically via recursive BFS link extraction, SEO parsing, and streaming progress
 
+import { parseRobotsTxt, getRulesForAgent, checkUrlAgainstRules } from './robotsTxt.js';
+
 export function isLocalEnvironment() {
   if (typeof window === 'undefined') return true;
   const host = window.location.hostname;
@@ -175,6 +177,31 @@ export class ClientCrawler {
     return true;
   }
 
+  devProxyUrl(url) {
+    return `/api/proxy?url=${encodeURIComponent(url)}&ua=${encodeURIComponent(this.userAgent)}`;
+  }
+
+  // Fetch robots.txt and keep the rules that apply to the selected user-agent.
+  // Uses only the already-detected engine so a missing robots.txt never resets proxy selection.
+  async loadRobotsRules() {
+    this.robotsRules = [];
+    if (!this.respectRobots || !this.preferredProxy) return;
+
+    try {
+      const robotsUrl = `${this.protocol}//${this.hostname}/robots.txt`;
+      const res = await this.executeProxyTarget(this.preferredProxy, robotsUrl, performance.now());
+      if (!res || !res.ok || !res.html || /<html[\s>]/i.test(res.html)) return;
+      this.robotsRules = getRulesForAgent(parseRobotsTxt(res.html), this.userAgent).rules;
+    } catch (e) {
+      this.robotsRules = [];
+    }
+  }
+
+  isBlockedByRobots(urlStr) {
+    if (!this.robotsRules || this.robotsRules.length === 0) return false;
+    return !checkUrlAgainstRules(this.robotsRules, urlStr).allowed;
+  }
+
   abort() {
     this.isAborted = true;
     this.onLog('Crawler stopped by user.', 'warn');
@@ -210,7 +237,7 @@ export class ClientCrawler {
     // 1. Local Vite dev server proxy (ONLY active on localhost)
     if (isLocalEnvironment()) {
       try {
-        const probeRes = await this.tryFetchEndpoint(`/api/proxy?url=${encodeURIComponent(testUrl)}`, {}, 1000);
+        const probeRes = await this.tryFetchEndpoint(this.devProxyUrl(testUrl), {}, 1000);
         if (probeRes && probeRes.ok) {
           const text = await probeRes.text();
           if (text && text.length > 20 && !text.includes('{"error":')) {
@@ -312,7 +339,7 @@ export class ClientCrawler {
     // 2. Built-in local dev proxy endpoint (ONLY on localhost dev server)
     if (isLocalEnvironment()) {
       try {
-        const devProxyUrl = `/api/proxy?url=${encodeURIComponent(url)}`;
+        const devProxyUrl = this.devProxyUrl(url);
         const resp = await this.tryFetchEndpoint(devProxyUrl, {}, 2500);
         if (resp && resp.ok) {
           const html = await resp.text();
@@ -414,7 +441,7 @@ export class ClientCrawler {
         }
       }
     } else if (pref.type === 'dev') {
-      const devProxyUrl = `/api/proxy?url=${encodeURIComponent(url)}`;
+      const devProxyUrl = this.devProxyUrl(url);
       const resp = await this.tryFetchEndpoint(devProxyUrl, {}, 2500);
       if (resp && resp.ok) {
         const html = await resp.text();
@@ -477,7 +504,8 @@ export class ClientCrawler {
       loadTime: Math.floor(Math.random() * 60) + 80,
       sizeKb: Math.floor(Math.random() * 30) + 15,
       depth,
-      imagesCount: Math.floor(Math.random() * 4) + 1,
+      imagesCount: 0,
+      images: [],
       hasCanonical: true,
       isIndexable: true,
       lastmod: new Date().toISOString().split('T')[0],
@@ -525,6 +553,7 @@ export class ClientCrawler {
 
     if (!this.hostname) {
       this.onLog('Invalid starting URL.', 'error');
+      this.onComplete([], { discovered: 0, added: 0, skipped: 0, skippedPages: [], aborted: false });
       return;
     }
 
@@ -568,6 +597,11 @@ export class ClientCrawler {
     try {
       await this.detectBestEngine(rootUrl);
     } catch (e) {}
+
+    await this.loadRobotsRules();
+    if (this.robotsRules.length > 0) {
+      this.onLog(`Loaded ${this.robotsRules.length} robots.txt rules.`, 'info');
+    }
 
     const processItem = async (item) => {
       if (this.isAborted || discoveredPages.length >= this.maxPages) return;
@@ -621,9 +655,20 @@ export class ClientCrawler {
             return;
           }
 
-          const imagesCount = doc 
-            ? doc.querySelectorAll('img').length 
-            : [...fetchResult.html.matchAll(/!\[.*?\]\((https?:\/\/[^\s\)\'\"]+)\)/g)].length;
+          const bodyText = doc ? (doc.body?.textContent || '') : fetchResult.html.replace(/!?\[[^\]]*\]\([^)]*\)/g, ' ');
+          const wordCount = (bodyText.match(/[\p{L}\p{N}][\p{L}\p{N}'’-]*/gu) || []).length;
+
+          // Collect real, absolute image URLs for the <image:image> sitemap extension
+          const rawImageSrcs = doc
+            ? [...doc.querySelectorAll('img')].map(img => img.getAttribute('src') || img.getAttribute('data-src'))
+            : [...fetchResult.html.matchAll(/!\[.*?\]\((https?:\/\/[^\s\)\'\"]+)\)/g)].map(m => m[1]);
+          const images = [];
+          for (const src of rawImageSrcs) {
+            if (!src || src.startsWith('data:') || src.startsWith('blob:')) continue;
+            const abs = this.normalizeUrl(src.trim(), item.url);
+            if (abs && !images.includes(abs)) images.push(abs);
+            if (images.length >= 20) break;
+          }
 
           pageData = {
             url: item.url,
@@ -634,7 +679,10 @@ export class ClientCrawler {
             loadTime: fetchResult.latency || Math.floor(Math.random() * 40) + 60,
             sizeKb: Math.round(fetchResult.html.length / 1024) || Math.floor(Math.random() * 30) + 15,
             depth: item.depth,
-            imagesCount: Math.max(1, imagesCount),
+            imagesCount: images.length,
+            images,
+            wordCount,
+            links: [],
             hasCanonical: !!canonicalHref,
             isIndexable: !isNoIndex,
             lastmod: new Date().toISOString().split('T')[0],
@@ -646,8 +694,9 @@ export class ClientCrawler {
             this.onLog(`Connected to ${this.hostname} via ${fetchResult.proxyName} (${fetchResult.latency}ms)`, 'info');
           }
 
-          // Recursively discover internal child links
-          if (item.depth < this.maxDepth && !isNoFollow && (discoveredPages.length + queue.length) < this.maxPages) {
+          // Extract internal links: always recorded for the link graph, only enqueued within depth limits
+          if (!isNoFollow) {
+            const canEnqueue = item.depth < this.maxDepth;
             const rawLinks = [];
 
             if (doc) {
@@ -688,11 +737,23 @@ export class ClientCrawler {
                 continue;
               }
 
+              // Record the internal link graph (for orphan / inlink analysis)
+              if (norm !== item.url && !pageData.links.includes(norm) && pageData.links.length < 500) {
+                pageData.links.push(norm);
+              }
+
+              if (!canEnqueue) continue;
+
               this.discoveredUrls.add(norm);
 
               const matches = this.matchesPatterns(norm);
               if (!matches) {
                 recordSkipped(norm, 'Excluded by URL Pattern');
+                continue;
+              }
+
+              if (this.isBlockedByRobots(norm)) {
+                recordSkipped(norm, 'Blocked by robots.txt');
                 continue;
               }
 
@@ -797,7 +858,8 @@ export class ClientCrawler {
       discovered: discoveredCount,
       added: addedCount,
       skipped: skippedCount,
-      skippedPages: skippedList
+      skippedPages: skippedList,
+      aborted: this.isAborted
     };
 
     // Finished

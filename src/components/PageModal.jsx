@@ -1,133 +1,148 @@
-import React from 'react';
-import { 
-  X, 
-  ExternalLink, 
-  CheckCircle, 
-  AlertCircle, 
-  Clock, 
-  HardDrive, 
-  Layers, 
+import React, { useEffect } from 'react';
+import {
+  X,
+  ExternalLink,
   Share2,
   FileText
 } from 'lucide-react';
 
+function StatTile({ label, value, color }) {
+  return (
+    <div className="glass-panel" style={{ padding: '0.75rem', background: 'var(--surface-2)', boxShadow: 'none' }}>
+      <span style={{ fontSize: '0.74rem', color: 'var(--text-muted)' }}>{label}</span>
+      <div style={{ fontWeight: 650, marginTop: '0.15rem', color: color || 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>
+        {value}
+      </div>
+    </div>
+  );
+}
+
+function LengthBadge({ length, min, max }) {
+  const ideal = length >= min && length <= max;
+  return (
+    <span className={`badge ${ideal ? 'badge-200' : 'badge-warn'}`} style={{ fontSize: '0.7rem' }}>
+      {length} chars {ideal ? '· ideal' : `· aim for ${min}–${max}`}
+    </span>
+  );
+}
+
 export default function PageModal({ page, onClose }) {
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [onClose]);
+
   if (!page) return null;
 
-  const is2xx = !page.statusCode || (page.statusCode >= 200 && page.statusCode < 300);
+  const failed = page.fetchFailed || !page.statusCode;
+  const is2xx = !failed && page.statusCode >= 200 && page.statusCode < 300;
   const titleLen = (page.title || '').length;
   const descLen = (page.description || '').length;
 
   return (
     <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-        {/* Modal Header */}
-        <div style={{ padding: '1.25rem 1.5rem', borderBottom: '1px solid var(--border-subtle)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <div
+        className="modal-content"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="page-modal-title"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div style={{ padding: '1.1rem 1.4rem', borderBottom: '1px solid var(--border-subtle)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-            <FileText size={20} className="text-cyan" />
-            <h3 style={{ fontSize: '1.1rem', fontWeight: 700 }}>Page Inspector & SEO Audit</h3>
+            <FileText size={18} style={{ color: 'var(--primary)' }} />
+            <h3 id="page-modal-title" style={{ fontSize: '1.02rem', fontWeight: 650 }}>Page inspector</h3>
           </div>
-          <button className="icon-btn" onClick={onClose} title="Close">
-            <X size={18} />
+          <button type="button" className="icon-btn" onClick={onClose} aria-label="Close" autoFocus>
+            <X size={17} />
           </button>
         </div>
 
-        {/* Modal Body */}
-        <div style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-          {/* Target URL banner */}
-          <div className="glass-panel" style={{ padding: '1rem', background: 'rgba(255, 255, 255, 0.02)' }}>
-            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', textTransform: 'uppercase', fontWeight: 700 }}>
-              Inspected URL
+        {/* Body */}
+        <div style={{ padding: '1.4rem', display: 'flex', flexDirection: 'column', gap: '1.1rem' }}>
+          <div>
+            <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 600 }}>
+              URL
             </span>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.2rem' }}>
-              <span style={{ fontWeight: 600, wordBreak: 'break-all', color: 'var(--text-primary)' }}>
+              <span style={{ fontWeight: 550, wordBreak: 'break-all', fontFamily: 'var(--font-mono)', fontSize: '0.85rem' }}>
                 {page.url}
               </span>
-              <a href={page.url} target="_blank" rel="noreferrer" className="text-cyan">
+              <a href={page.url} target="_blank" rel="noreferrer" className="ext-link" aria-label="Open page in new tab">
                 <ExternalLink size={14} />
               </a>
             </div>
           </div>
 
-          {/* Quick Metrics Cards */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '0.75rem' }}>
-            <div className="glass-panel" style={{ padding: '0.75rem', textAlign: 'center' }}>
-              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>HTTP Status</span>
-              <div style={{ fontWeight: 700, marginTop: '0.2rem', color: is2xx ? 'var(--accent-emerald)' : 'var(--accent-red)' }}>
-                {page.statusCode || 200} {is2xx ? 'OK' : 'Error'}
-              </div>
-            </div>
-
-            <div className="glass-panel" style={{ padding: '0.75rem', textAlign: 'center' }}>
-              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Response Speed</span>
-              <div style={{ fontWeight: 700, marginTop: '0.2rem', color: 'var(--accent-cyan)' }}>
-                {page.loadTime || 180} ms
-              </div>
-            </div>
-
-            <div className="glass-panel" style={{ padding: '0.75rem', textAlign: 'center' }}>
-              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Hierarchy Depth</span>
-              <div style={{ fontWeight: 700, marginTop: '0.2rem' }}>
-                Level {page.depth ?? 0}
-              </div>
-            </div>
-
-            <div className="glass-panel" style={{ padding: '0.75rem', textAlign: 'center' }}>
-              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Images Tagged</span>
-              <div style={{ fontWeight: 700, marginTop: '0.2rem', color: 'var(--accent-purple)' }}>
-                {page.imagesCount || 0} Assets
-              </div>
-            </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '0.6rem' }}>
+            <StatTile
+              label="HTTP status"
+              value={failed ? 'Not reached' : `${page.statusCode} ${is2xx ? 'OK' : 'Error'}`}
+              color={failed ? 'var(--accent-amber)' : is2xx ? 'var(--accent-emerald)' : 'var(--accent-red)'}
+            />
+            <StatTile label="Response time" value={page.loadTime > 0 ? `${page.loadTime} ms` : '—'} />
+            <StatTile label="Depth" value={`Level ${page.depth ?? 0}`} />
+            <StatTile label="Images" value={page.imagesCount || 0} />
           </div>
 
-          {/* Title Tag Analysis */}
-          <div className="glass-panel" style={{ padding: '1rem' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.3rem' }}>
-              <span style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-secondary)' }}>
-                TITLE TAG
-              </span>
-              <span className="badge" style={{ fontSize: '0.7rem', background: (titleLen >= 30 && titleLen <= 65) ? 'rgba(16, 185, 129, 0.15)' : 'rgba(245, 158, 11, 0.15)', color: (titleLen >= 30 && titleLen <= 65) ? 'var(--accent-emerald)' : 'var(--accent-amber)' }}>
-                {titleLen} characters {(titleLen >= 30 && titleLen <= 65) ? '(Ideal)' : '(Check length)'}
-              </span>
+          <div className="glass-panel" style={{ padding: '1rem', boxShadow: 'none' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem', marginBottom: '0.35rem', flexWrap: 'wrap' }}>
+              <span className="option-label">Title tag</span>
+              <LengthBadge length={titleLen} min={30} max={65} />
             </div>
-            <p style={{ fontWeight: 600, fontSize: '0.95rem', color: page.title ? 'var(--text-primary)' : 'var(--accent-red)' }}>
+            <p style={{ fontWeight: 550, fontSize: '0.95rem', color: page.title ? 'var(--text-primary)' : 'var(--accent-red)' }}>
               {page.title || 'Missing title tag'}
             </p>
           </div>
 
-          {/* Meta Description Analysis */}
-          <div className="glass-panel" style={{ padding: '1rem' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.3rem' }}>
-              <span style={{ fontSize: '0.8rem', fontWeight: 700, color: 'var(--text-secondary)' }}>
-                META DESCRIPTION
-              </span>
-              <span className="badge" style={{ fontSize: '0.7rem', background: (descLen >= 100 && descLen <= 165) ? 'rgba(16, 185, 129, 0.15)' : 'rgba(245, 158, 11, 0.15)', color: (descLen >= 100 && descLen <= 165) ? 'var(--accent-emerald)' : 'var(--accent-amber)' }}>
-                {descLen} characters {(descLen >= 100 && descLen <= 165) ? '(Ideal)' : '(Check length)'}
-              </span>
+          <div className="glass-panel" style={{ padding: '1rem', boxShadow: 'none' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.5rem', marginBottom: '0.35rem', flexWrap: 'wrap' }}>
+              <span className="option-label">Meta description</span>
+              <LengthBadge length={descLen} min={100} max={165} />
             </div>
             <p style={{ fontSize: '0.9rem', color: page.description ? 'var(--text-secondary)' : 'var(--accent-red)' }}>
               {page.description || 'Missing meta description tag'}
             </p>
           </div>
 
-          {/* Social Snippet Card (SERP / Open Graph Preview) */}
-          <div className="glass-panel" style={{ padding: '1rem', background: 'rgba(99, 102, 241, 0.05)', border: '1px solid rgba(99, 102, 241, 0.2)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '0.6rem', color: 'var(--primary)', fontSize: '0.8rem', fontWeight: 700 }}>
-              <Share2 size={14} />
-              <span>Google SERP & Social Sharing Card Preview</span>
+          {page.h1 && (
+            <div className="glass-panel" style={{ padding: '1rem', boxShadow: 'none' }}>
+              <span className="option-label">H1 heading</span>
+              <p style={{ fontSize: '0.9rem', marginTop: '0.25rem' }}>{page.h1}</p>
             </div>
-            <div style={{ background: 'var(--bg-surface-elevated)', borderRadius: 'var(--radius-sm)', padding: '0.85rem' }}>
-              <div style={{ fontSize: '0.75rem', color: 'var(--accent-cyan)' }}>{page.url}</div>
-              <div style={{ fontSize: '1rem', fontWeight: 600, color: '#60a5fa', margin: '0.2rem 0' }}>{page.title || 'Untitled'}</div>
-              <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.4 }}>{page.description || 'No description provided.'}</div>
+          )}
+
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '0.5rem', color: 'var(--text-secondary)', fontSize: '0.8rem', fontWeight: 600 }}>
+              <Share2 size={14} />
+              <span>Search result preview</span>
+            </div>
+            <div className="serp-preview">
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', wordBreak: 'break-all' }}>{page.url}</div>
+              <div style={{ fontSize: '1.05rem', color: 'var(--link)', margin: '0.15rem 0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {page.title || 'Untitled'}
+              </div>
+              <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.45 }}>
+                {(page.description || 'No description provided.').slice(0, 165)}
+                {descLen > 165 ? '…' : ''}
+              </div>
             </div>
           </div>
         </div>
 
-        {/* Modal Footer */}
-        <div style={{ padding: '1rem 1.5rem', borderTop: '1px solid var(--border-subtle)', display: 'flex', justifyContent: 'flex-end' }}>
-          <button className="btn btn-secondary" onClick={onClose}>
-            Close Inspector
+        {/* Footer */}
+        <div style={{ padding: '0.9rem 1.4rem', borderTop: '1px solid var(--border-subtle)', display: 'flex', justifyContent: 'flex-end' }}>
+          <button type="button" className="btn btn-secondary" onClick={onClose}>
+            Close
           </button>
         </div>
       </div>

@@ -38,7 +38,15 @@ export function runSeoAudit(pages = []) {
     const pageIssues = [];
 
     // 1. HTTP Status Check
-    if (page.statusCode >= 400) {
+    if (page.fetchFailed) {
+      pageIssues.push({
+        type: 'critical',
+        category: 'HTTP Status',
+        message: 'Page could not be fetched during the crawl.',
+        recommendation: 'Check that the URL is reachable, or configure a custom CORS proxy in Options and crawl again.'
+      });
+      breakdown.statusCodes.failed++;
+    } else if (page.statusCode >= 400) {
       pageIssues.push({
         type: 'critical',
         category: 'HTTP Status',
@@ -139,18 +147,22 @@ export function runSeoAudit(pages = []) {
       breakdown.performance.passed++;
     }
 
-    if (pageIssues.length === 0) {
+    // Info-level notes (e.g. canonical) don't stop a page from counting as healthy
+    if (!pageIssues.some(iss => iss.type !== 'info')) {
       healthyPages++;
-    } else {
-      pageIssues.forEach(iss => {
-        if (iss.type === 'critical') criticalCount++;
-        else if (iss.type === 'warning') warningCount++;
-        issues.push({ ...iss, url: page.url, pageTitle: page.title });
-      });
     }
+    pageIssues.forEach(iss => {
+      if (iss.type === 'critical') criticalCount++;
+      else if (iss.type === 'warning') warningCount++;
+      issues.push({ ...iss, url: page.url, pageTitle: page.title });
+    });
   });
 
-  // Calculate score 0-100: deduct 15 for critical, 5 for warning, clamp between 0 and 100
+  // Most severe first
+  const severity = { critical: 0, warning: 1, info: 2 };
+  issues.sort((a, b) => severity[a.type] - severity[b.type]);
+
+  // Calculate score 0-100: deduct 15 per critical and 4 per warning (averaged per page), floor of 10
   const penalty = (criticalCount * 15) + (warningCount * 4);
   const score = Math.max(10, Math.min(100, Math.round(100 - (penalty / (pages.length || 1)))));
 

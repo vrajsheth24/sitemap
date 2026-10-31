@@ -12,14 +12,25 @@ import {
 } from 'lucide-react';
 import { buildDirectoryTree } from '../../utils/treeBuilder';
 
+const decodeName = (name) => {
+  try {
+    return decodeURIComponent(name);
+  } catch (e) {
+    return name;
+  }
+};
+
 function TreeNode({ node, onInspectPage, expandedNodes, toggleExpand }) {
   const isExpanded = !!expandedNodes[node.id];
   const hasChildren = node.children && node.children.length > 0;
 
   return (
-    <div style={{ marginLeft: node.depth > 0 ? '1.5rem' : 0, position: 'relative' }}>
+    <div>
       <div 
         className="tree-node-item"
+        role="treeitem"
+        aria-expanded={hasChildren ? isExpanded : undefined}
+        tabIndex={0}
         onClick={() => {
           if (hasChildren) {
             toggleExpand(node.id);
@@ -27,13 +38,11 @@ function TreeNode({ node, onInspectPage, expandedNodes, toggleExpand }) {
             onInspectPage(node.page);
           }
         }}
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '0.5rem',
-          padding: '0.4rem 0.6rem',
-          borderRadius: 'var(--radius-sm)',
-          cursor: 'pointer',
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            e.currentTarget.click();
+          }
         }}
       >
         {/* Toggle Arrow */}
@@ -57,27 +66,27 @@ function TreeNode({ node, onInspectPage, expandedNodes, toggleExpand }) {
         ) : hasChildren ? (
           isExpanded ? <FolderOpen size={17} className="text-amber" /> : <Folder size={17} className="text-amber" />
         ) : (
-          <FileText size={16} className="text-secondary" />
+          <FileText size={16} className="text-muted" />
         )}
 
         {/* Name and Path */}
         <span style={{ fontWeight: hasChildren ? 600 : 400, color: hasChildren ? 'var(--text-primary)' : 'var(--text-secondary)' }}>
-          {node.name || '/'}
+          {decodeName(node.name) || '/'}
         </span>
 
         {/* Badges */}
         {hasChildren && (
-          <span className="badge" style={{ background: 'rgba(255, 255, 255, 0.06)', fontSize: '0.7rem' }}>
-            {node.pageCount} items
+          <span className="badge badge-muted" style={{ fontSize: '0.7rem' }}>
+            {node.pageCount} {node.pageCount === 1 ? 'page' : 'pages'}
           </span>
         )}
 
         {node.page && (
           <span 
-            className={`badge ${node.page.statusCode >= 400 ? 'badge-400' : 'badge-200'}`}
+            className={`badge ${node.page.fetchFailed || !node.page.statusCode ? 'badge-warn' : node.page.statusCode >= 400 ? 'badge-400' : 'badge-200'}`}
             style={{ fontSize: '0.65rem' }}
           >
-            {node.page.statusCode || 200}
+            {node.page.fetchFailed || !node.page.statusCode ? 'Unreached' : node.page.statusCode}
           </span>
         )}
 
@@ -86,7 +95,8 @@ function TreeNode({ node, onInspectPage, expandedNodes, toggleExpand }) {
           <button
             className="icon-btn"
             style={{ width: '24px', height: '24px', marginLeft: 'auto' }}
-            title="Inspect Metadata"
+            title="Inspect metadata"
+            aria-label="Inspect metadata"
             onClick={(e) => {
               e.stopPropagation();
               onInspectPage(node.page);
@@ -99,7 +109,7 @@ function TreeNode({ node, onInspectPage, expandedNodes, toggleExpand }) {
 
       {/* Render children if expanded */}
       {hasChildren && isExpanded && (
-        <div style={{ borderLeft: '1px dashed var(--border-subtle)', marginLeft: '0.8rem', paddingLeft: '0.2rem' }}>
+        <div className="tree-children" role="group">
           {node.children.map(child => (
             <TreeNode 
               key={child.id} 
@@ -146,12 +156,11 @@ export default function VisualTreeTab({ pages, onInspectPage }) {
 
   if (!tree || pages.length === 0) {
     return (
-      <div className="glass-panel" style={{ padding: '3.5rem 1rem', textAlign: 'center', color: 'var(--text-muted)' }}>
-        <span style={{ fontSize: '1rem', fontWeight: 600, color: 'var(--text-secondary)', display: 'block', marginBottom: '0.4rem' }}>
-          No pages to map into a tree hierarchy
-        </span>
-        <span style={{ fontSize: '0.85rem' }}>
-          Enter a website URL above and click <b>Start Crawl</b>, or import a sitemap file to explore its structure visually.
+      <div className="glass-panel empty-state">
+        <div className="empty-state-icon"><FolderOpen size={20} /></div>
+        <span className="empty-state-title">Nothing to map yet</span>
+        <span>
+          Crawl a website or import a sitemap to explore its folder structure.
         </span>
       </div>
     );
@@ -159,27 +168,24 @@ export default function VisualTreeTab({ pages, onInspectPage }) {
 
   return (
     <div className="tab-content-container">
-      {/* Tree header toolbar */}
-      <div className="glass-panel" style={{ padding: '0.85rem 1.25rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <div className="section-header">
         <div>
-          <span style={{ fontWeight: 700, fontSize: '0.95rem' }}>Visual Directory Hierarchy</span>
-          <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginLeft: '0.5rem' }}>
-            ({pages.length} total nodes mapped)
-          </span>
+          <h2 className="section-title">Visual tree</h2>
+          <p className="section-subtitle">{pages.length} pages arranged by URL path. Click a folder to expand it, or a page to inspect it.</p>
         </div>
 
         <div style={{ display: 'flex', gap: '0.5rem' }}>
-          <button className="btn btn-secondary" onClick={expandAll} style={{ fontSize: '0.8rem', padding: '0.4rem 0.8rem' }}>
-            Expand All
+          <button type="button" className="btn btn-secondary" onClick={expandAll} style={{ fontSize: '0.8rem', padding: '0.4rem 0.8rem' }}>
+            <ChevronsUpDown size={14} />
+            Expand all
           </button>
-          <button className="btn btn-secondary" onClick={collapseAll} style={{ fontSize: '0.8rem', padding: '0.4rem 0.8rem' }}>
-            Collapse All
+          <button type="button" className="btn btn-secondary" onClick={collapseAll} style={{ fontSize: '0.8rem', padding: '0.4rem 0.8rem' }}>
+            Collapse all
           </button>
         </div>
       </div>
 
-      {/* Tree view card */}
-      <div className="glass-panel tree-container">
+      <div className="glass-panel tree-container" role="tree">
         <TreeNode 
           node={tree} 
           onInspectPage={onInspectPage} 

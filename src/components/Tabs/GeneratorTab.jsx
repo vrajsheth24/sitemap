@@ -1,70 +1,102 @@
 import React, { useState } from 'react';
-import { 
-  Search, 
-  Plus, 
-  Trash2, 
-  ExternalLink, 
-  Eye, 
+import {
+  Search,
+  Plus,
+  Trash2,
+  ExternalLink,
+  Eye,
   Filter,
   Check,
-  AlertTriangle,
-  XCircle,
-  Clock,
   ChevronLeft,
   ChevronRight,
   ChevronsLeft,
   ChevronsRight,
   FileText,
   Ban,
-  ShieldAlert,
-  FolderPlus
+  Globe
 } from 'lucide-react';
 
-export default function GeneratorTab({ 
-  pages = [], 
+const PRIORITY_OPTIONS = ['1.0', '0.9', '0.8', '0.7', '0.6', '0.5', '0.4', '0.3', '0.2', '0.1', '0.0'];
+const CHANGEFREQ_OPTIONS = ['always', 'hourly', 'daily', 'weekly', 'monthly', 'yearly', 'never'];
+
+const formatPriority = (value) => {
+  const n = Number(value);
+  if (value === undefined || value === null || Number.isNaN(n)) return '0.8';
+  return (Math.round(Math.min(1, Math.max(0, n)) * 10) / 10).toFixed(1);
+};
+
+const getReasonBadgeStyle = (reason = '') => {
+  const r = reason.toLowerCase();
+  if (r.includes('asset')) {
+    return { background: 'var(--warning-soft)', color: 'var(--accent-amber)' };
+  }
+  if (r.includes('external')) {
+    return { background: 'var(--info-soft)', color: 'var(--accent-cyan)' };
+  }
+  if (r.includes('noindex') || r.includes('robots')) {
+    return { background: 'var(--danger-soft)', color: 'var(--accent-red)' };
+  }
+  return { background: 'var(--violet-soft)', color: 'var(--accent-purple)' };
+};
+
+function StatusBadge({ page }) {
+  if (page.fetchFailed || !page.statusCode) {
+    return <span className="badge badge-warn" title="The page could not be fetched">Unreached</span>;
+  }
+  const code = page.statusCode;
+  const cls = code >= 400 ? 'badge-400' : code >= 300 ? 'badge-300' : 'badge-200';
+  return <span className={`badge ${cls}`}>{code}</span>;
+}
+
+export default function GeneratorTab({
+  pages = [],
   skippedPages = [],
   onIncludeSkipped,
-  onUpdatePage, 
-  onDeletePage, 
-  onAddPage, 
-  onInspectPage 
+  onUpdatePage,
+  onDeletePage,
+  onAddPage,
+  onInspectPage
 }) {
   const [subView, setSubView] = useState('sitemap'); // 'sitemap' | 'skipped'
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [skippedFilter, setSkippedFilter] = useState('all');
   const [newUrlInput, setNewUrlInput] = useState('');
+  const [addError, setAddError] = useState('');
   const [showAddRow, setShowAddRow] = useState(false);
-  
+
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
 
+  const term = searchTerm.trim().toLowerCase();
+
   // Filtered sitemap pages
   const filteredPages = pages.filter(p => {
-    const matchesSearch = p.url.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (p.title && p.title.toLowerCase().includes(searchTerm.toLowerCase()));
-    
+    const matchesSearch = !term || p.url.toLowerCase().includes(term) ||
+      (p.title && p.title.toLowerCase().includes(term));
+
     if (!matchesSearch) return false;
 
-    if (statusFilter === '200') return p.statusCode === 200;
-    if (statusFilter === 'broken') return p.statusCode >= 400;
-    if (statusFilter === 'missing-meta') return !p.description || p.description.length < 30;
+    if (statusFilter === '200') return !p.fetchFailed && p.statusCode >= 200 && p.statusCode < 300;
+    if (statusFilter === 'broken') return p.fetchFailed || !p.statusCode || p.statusCode >= 400;
+    if (statusFilter === 'missing-meta') return !p.description || p.description.length < 50;
 
     return true;
   });
 
   // Filtered skipped pages
   const filteredSkipped = (skippedPages || []).filter(item => {
-    const matchesSearch = item.url.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (item.reason && item.reason.toLowerCase().includes(searchTerm.toLowerCase()));
-    
+    const reason = (item.reason || '').toLowerCase();
+    const matchesSearch = !term || item.url.toLowerCase().includes(term) || reason.includes(term);
+
     if (!matchesSearch) return false;
 
-    if (skippedFilter === 'asset') return item.reason.toLowerCase().includes('asset');
-    if (skippedFilter === 'external') return item.reason.toLowerCase().includes('external');
-    if (skippedFilter === 'pattern') return item.reason.toLowerCase().includes('pattern');
-    if (skippedFilter === 'noindex') return item.reason.toLowerCase().includes('noindex');
+    if (skippedFilter === 'asset') return reason.includes('asset');
+    if (skippedFilter === 'external') return reason.includes('external');
+    if (skippedFilter === 'pattern') return reason.includes('pattern') || reason.includes('filter');
+    if (skippedFilter === 'noindex') return reason.includes('noindex') || reason.includes('robots');
+    if (skippedFilter === 'limit') return reason.includes('limit');
 
     return true;
   });
@@ -123,180 +155,146 @@ export default function GeneratorTab({
     if (!newUrlInput.trim()) return;
 
     let finalUrl = newUrlInput.trim();
-    if (!finalUrl.startsWith('http://') && !finalUrl.startsWith('https://')) {
+    if (!/^https?:\/\//i.test(finalUrl)) {
       finalUrl = 'https://' + finalUrl;
     }
 
+    let u;
     try {
-      const u = new URL(finalUrl);
-      const path = u.pathname;
-      const depth = path.split('/').filter(Boolean).length;
-      const slug = path.split('/').filter(Boolean).pop() || 'Home';
-      const inferredTitle = slug.replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-
-      onAddPage({
-        url: finalUrl,
-        title: inferredTitle,
-        description: `Custom added URL: ${finalUrl}`,
-        h1: inferredTitle,
-        statusCode: 200,
-        loadTime: 180,
-        sizeKb: 30,
-        depth,
-        imagesCount: 2,
-        hasCanonical: true,
-        isIndexable: true,
-        lastmod: new Date().toISOString().split('T')[0],
-        changefreq: 'weekly',
-        priority: 0.8,
-      });
-
-      setNewUrlInput('');
-      setShowAddRow(false);
+      u = new URL(finalUrl);
+      if (!u.hostname.includes('.') && u.hostname !== 'localhost') throw new Error();
     } catch (err) {
-      alert('Invalid URL format');
+      setAddError('Please enter a valid URL, e.g. https://mysite.com/about');
+      return;
+    }
+
+    const segments = u.pathname.split('/').filter(Boolean);
+    const depth = segments.length;
+    const slug = segments[segments.length - 1] || 'Home';
+    const inferredTitle = slug.replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+
+    const added = onAddPage({
+      url: u.href,
+      title: inferredTitle,
+      description: `Custom added URL: ${u.href}`,
+      h1: inferredTitle,
+      statusCode: 200,
+      loadTime: 0,
+      sizeKb: 0,
+      depth,
+      imagesCount: 0,
+      images: [],
+      hasCanonical: true,
+      isIndexable: true,
+      lastmod: new Date().toISOString().split('T')[0],
+      changefreq: 'weekly',
+      priority: 0.8,
+    });
+
+    if (added !== false) {
+      setNewUrlInput('');
+      setAddError('');
+      setShowAddRow(false);
     }
   };
 
-  const getReasonBadgeStyle = (reason = '') => {
-    const r = reason.toLowerCase();
-    if (r.includes('asset')) {
-      return { background: 'rgba(245, 158, 11, 0.15)', color: 'var(--accent-amber)', border: '1px solid rgba(245, 158, 11, 0.3)' };
-    }
-    if (r.includes('external')) {
-      return { background: 'rgba(6, 182, 212, 0.15)', color: 'var(--accent-cyan)', border: '1px solid rgba(6, 182, 212, 0.3)' };
-    }
-    if (r.includes('noindex')) {
-      return { background: 'rgba(239, 68, 68, 0.15)', color: 'var(--accent-red)', border: '1px solid rgba(239, 68, 68, 0.3)' };
-    }
-    return { background: 'rgba(168, 85, 247, 0.15)', color: 'var(--accent-purple)', border: '1px solid rgba(168, 85, 247, 0.3)' };
-  };
+  const renderEmptyRow = (colSpan, icon, title, text) => (
+    <tr>
+      <td colSpan={colSpan}>
+        <div className="empty-state">
+          {icon && <div className="empty-state-icon">{icon}</div>}
+          {title && <span className="empty-state-title">{title}</span>}
+          <span>{text}</span>
+        </div>
+      </td>
+    </tr>
+  );
 
   return (
     <div className="tab-content-container">
-      {/* Sub-view Switcher: Sitemap Pages vs Skipped URLs */}
-      <div style={{ display: 'flex', gap: '0.65rem', alignItems: 'center', marginBottom: '0.25rem', flexWrap: 'wrap' }}>
-        <button
-          type="button"
-          className={`btn ${subView === 'sitemap' ? 'btn-primary' : 'btn-secondary'}`}
-          onClick={() => handleSubViewSwitch('sitemap')}
-          style={{ fontSize: '0.85rem', padding: '0.55rem 1.1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
-        >
-          <FileText size={16} />
-          <span>Sitemap Pages</span>
-          <span 
-            className="badge" 
-            style={{ 
-              background: subView === 'sitemap' ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.08)', 
-              color: '#fff',
-              padding: '0.15rem 0.5rem',
-              fontWeight: 800 
-            }}
+      {/* Section header with sub-view switcher */}
+      <div className="section-header">
+        <div>
+          <h2 className="section-title">URLs</h2>
+          <p className="section-subtitle">Review crawled pages, tune priority and change frequency, or add URLs by hand.</p>
+        </div>
+        <div className="segmented" role="tablist" aria-label="URL list">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={subView === 'sitemap'}
+            className={subView === 'sitemap' ? 'active' : ''}
+            onClick={() => handleSubViewSwitch('sitemap')}
           >
-            {pages.length}
-          </span>
-        </button>
-
-        <button
-          type="button"
-          className={`btn ${subView === 'skipped' ? 'btn-primary' : 'btn-secondary'}`}
-          onClick={() => handleSubViewSwitch('skipped')}
-          style={{ 
-            fontSize: '0.85rem', 
-            padding: '0.55rem 1.1rem', 
-            display: 'flex', 
-            alignItems: 'center', 
-            gap: '0.5rem',
-            color: subView === 'skipped' ? '#fff' : 'var(--accent-amber)',
-            borderColor: subView === 'skipped' ? 'transparent' : 'rgba(245, 158, 11, 0.35)'
-          }}
-        >
-          <Ban size={16} />
-          <span>Skipped & Filtered</span>
-          <span 
-            className="badge" 
-            style={{ 
-              background: subView === 'skipped' ? 'rgba(255,255,255,0.25)' : 'rgba(245, 158, 11, 0.2)', 
-              color: subView === 'skipped' ? '#fff' : 'var(--accent-amber)', 
-              padding: '0.15rem 0.5rem',
-              fontWeight: 800
-            }}
+            <FileText size={14} />
+            <span>In sitemap</span>
+            <span className="count">{pages.length}</span>
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={subView === 'skipped'}
+            className={subView === 'skipped' ? 'active' : ''}
+            onClick={() => handleSubViewSwitch('skipped')}
           >
-            {skippedPages.length}
-          </span>
-        </button>
+            <Ban size={14} />
+            <span>Skipped</span>
+            <span className="count">{skippedPages.length}</span>
+          </button>
+        </div>
       </div>
 
       {/* Controls Bar */}
-      <div className="glass-panel" style={{ padding: '1rem', display: 'flex', gap: '1rem', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', alignItems: 'center', flex: 1 }}>
-          {/* Search box */}
-          <div className="url-input-box" style={{ maxWidth: '340px', flex: 1 }}>
-            <Search size={16} className="text-secondary" />
+      <div className="glass-panel toolbar">
+        <div className="toolbar-group" style={{ flex: 1 }}>
+          <div className="url-input-box" style={{ maxWidth: '340px', flex: '1 1 220px' }}>
+            <Search size={15} className="text-muted" />
             <input
-              type="text"
+              type="search"
               className="url-input-field"
-              placeholder={subView === 'sitemap' ? "Search URLs or titles..." : "Search skipped URLs or reasons..."}
+              aria-label="Search"
+              placeholder={subView === 'sitemap' ? 'Search URLs or titles…' : 'Search skipped URLs or reasons…'}
               value={searchTerm}
               onChange={handleSearchChange}
               style={{ fontSize: '0.875rem' }}
             />
           </div>
 
-          {/* Filter Dropdown */}
-          {subView === 'sitemap' ? (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <Filter size={16} className="text-secondary" />
-              <select
-                className="option-select"
-                value={statusFilter}
-                onChange={handleFilterChange}
-              >
-                <option value="all">All Pages ({pages.length})</option>
-                <option value="200">200 OK Only</option>
-                <option value="broken">Broken Links (4xx/5xx)</option>
-                <option value="missing-meta">Missing Description</option>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+            <Filter size={15} className="text-muted" />
+            {subView === 'sitemap' ? (
+              <select className="option-select" aria-label="Filter pages" value={statusFilter} onChange={handleFilterChange}>
+                <option value="all">All pages ({pages.length})</option>
+                <option value="200">2xx OK only</option>
+                <option value="broken">Broken or unreached</option>
+                <option value="missing-meta">Short or missing description</option>
               </select>
-            </div>
-          ) : (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <Filter size={16} className="text-secondary" />
-              <select
-                className="option-select"
-                value={skippedFilter}
-                onChange={handleSkippedFilterChange}
-              >
-                <option value="all">All Skipped ({skippedPages.length})</option>
-                <option value="asset">Assets Only (.png, .pdf, .css)</option>
-                <option value="external">External Domains</option>
-                <option value="pattern">Excluded Patterns</option>
-                <option value="noindex">NoIndex Directives</option>
+            ) : (
+              <select className="option-select" aria-label="Filter skipped URLs" value={skippedFilter} onChange={handleSkippedFilterChange}>
+                <option value="all">All skipped ({skippedPages.length})</option>
+                <option value="asset">Assets (.png, .pdf, .css)</option>
+                <option value="external">External domains</option>
+                <option value="pattern">Excluded by patterns</option>
+                <option value="noindex">Noindex / robots.txt</option>
+                <option value="limit">Over page limit</option>
               </select>
-            </div>
-          )}
-
-          {/* Rows Per Page Selector */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-            <span style={{ fontSize: '0.8rem' }}>Show:</span>
-            <select
-              className="option-select"
-              value={pageSize}
-              onChange={handlePageSizeChange}
-              style={{ padding: '0.35rem 0.6rem', fontSize: '0.8rem' }}
-            >
-              <option value={10}>10 / page</option>
-              <option value={25}>25 / page</option>
-              <option value={50}>50 / page</option>
-              <option value={100}>100 / page</option>
-            </select>
+            )}
           </div>
+
+          <select className="option-select" aria-label="Rows per page" value={pageSize} onChange={handlePageSizeChange}>
+            <option value={10}>10 / page</option>
+            <option value={25}>25 / page</option>
+            <option value={50}>50 / page</option>
+            <option value={100}>100 / page</option>
+          </select>
         </div>
 
         {subView === 'sitemap' && (
           <button
+            type="button"
             className="btn btn-primary"
-            onClick={() => setShowAddRow(!showAddRow)}
-            style={{ fontSize: '0.8rem', padding: '0.5rem 0.9rem' }}
+            onClick={() => { setShowAddRow(!showAddRow); setAddError(''); }}
+            style={{ fontSize: '0.84rem' }}
           >
             <Plus size={15} />
             <span>Add URL</span>
@@ -306,50 +304,36 @@ export default function GeneratorTab({
 
       {/* Inline Add Row Form */}
       {subView === 'sitemap' && showAddRow && (
-        <form onSubmit={handleAddNew} className="glass-panel" style={{ padding: '1rem', display: 'flex', gap: '0.75rem', alignItems: 'center', background: 'rgba(99, 102, 241, 0.08)' }}>
-          <input
-            type="text"
-            className="option-input"
-            style={{ flex: 1 }}
-            placeholder="Enter full URL (e.g. https://mysite.com/features/analytics)"
-            value={newUrlInput}
-            onChange={(e) => setNewUrlInput(e.target.value)}
-            autoFocus
-          />
-          <button type="submit" className="btn btn-primary" style={{ padding: '0.45rem 1rem' }}>
-            Save URL
-          </button>
-          <button type="button" className="btn btn-secondary" onClick={() => setShowAddRow(false)} style={{ padding: '0.45rem 0.75rem' }}>
-            Cancel
-          </button>
+        <form onSubmit={handleAddNew} className="glass-panel" style={{ padding: '0.85rem', display: 'flex', flexDirection: 'column', gap: '0.4rem', borderColor: 'var(--primary)' }}>
+          <div style={{ display: 'flex', gap: '0.6rem', alignItems: 'center', flexWrap: 'wrap' }}>
+            <input
+              type="text"
+              className="option-input"
+              style={{ flex: '1 1 260px' }}
+              aria-label="URL to add"
+              placeholder="https://mysite.com/features/analytics"
+              value={newUrlInput}
+              onChange={(e) => { setNewUrlInput(e.target.value); setAddError(''); }}
+              autoFocus
+            />
+            <button type="submit" className="btn btn-primary">Save URL</button>
+            <button type="button" className="btn btn-secondary" onClick={() => { setShowAddRow(false); setAddError(''); }}>
+              Cancel
+            </button>
+          </div>
+          {addError && <span className="field-error">{addError}</span>}
         </form>
       )}
 
       {/* Informational Banner for Skipped URLs */}
-      {subView === 'skipped' && (
-        <div 
-          className="glass-panel" 
-          style={{ 
-            padding: '0.75rem 1.25rem', 
-            display: 'flex', 
-            alignItems: 'center', 
-            justifyContent: 'space-between',
-            gap: '1rem',
-            background: 'rgba(245, 158, 11, 0.05)',
-            border: '1px solid rgba(245, 158, 11, 0.2)',
-            fontSize: '0.82rem',
-            color: 'var(--text-secondary)'
-          }}
-        >
+      {subView === 'skipped' && skippedPages.length > 0 && (
+        <div className="env-banner" style={{ borderColor: 'var(--warning-border)', background: 'var(--warning-soft)', color: 'var(--text-secondary)' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-            <Ban size={16} style={{ color: 'var(--accent-amber)' }} />
+            <Ban size={15} style={{ color: 'var(--accent-amber)', flexShrink: 0 }} />
             <span>
-              These URLs were discovered in page links but filtered out (assets like images/PDFs, external sites, or noindex directives). You can click <b>+ Add to Sitemap</b> to include any link.
+              These links were found while crawling but filtered out (assets, patterns, noindex, robots.txt or the page limit). Use <b>Add</b> to include any of them.
             </span>
           </div>
-          <span style={{ fontWeight: 700, color: 'var(--accent-amber)', whiteSpace: 'nowrap' }}>
-            {filteredSkipped.length} skipped links
-          </span>
         </div>
       )}
 
@@ -359,136 +343,88 @@ export default function GeneratorTab({
           <table className="custom-table">
             <thead>
               <tr>
-                <th style={{ width: '40%' }}>URL & Title</th>
+                <th style={{ width: '42%' }}>URL & title</th>
                 <th>Status</th>
                 <th>Priority</th>
                 <th>Changefreq</th>
                 <th>Depth</th>
-                <th>Latency</th>
+                <th>Response</th>
                 <th style={{ textAlign: 'right' }}>Actions</th>
               </tr>
             </thead>
             <tbody>
               {pages.length === 0 ? (
-                <tr>
-                  <td colSpan={7} style={{ textAlign: 'center', padding: '3.5rem 1rem', color: 'var(--text-muted)' }}>
-                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.6rem' }}>
-                      <span style={{ fontSize: '1rem', fontWeight: 600, color: 'var(--text-secondary)' }}>
-                        No pages to display yet
-                      </span>
-                      <span style={{ fontSize: '0.85rem' }}>
-                        Enter a website URL above and click <b>Start Crawl</b>, or click <b>Import</b> to load an existing sitemap.
-                      </span>
-                    </div>
-                  </td>
-                </tr>
+                renderEmptyRow(7, <Globe size={20} />, 'No pages yet',
+                  <>Enter a website URL above and press <b>Start crawl</b>, or <b>Import</b> an existing sitemap.</>)
               ) : filteredPages.length === 0 ? (
-                <tr>
-                  <td colSpan={7} style={{ textAlign: 'center', padding: '3rem 1rem', color: 'var(--text-muted)' }}>
-                    No pages match the current filter or search criteria.
-                  </td>
-                </tr>
+                renderEmptyRow(7, null, null, 'No pages match the current filter or search.')
               ) : (
-                paginatedItems.map((page, index) => {
-                  const is2xx = !page.statusCode || (page.statusCode >= 200 && page.statusCode < 300);
-                  const is4xx = page.statusCode && page.statusCode >= 400;
-
-                  return (
-                    <tr key={page.url + index}>
-                      <td>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                            <span style={{ fontWeight: 600, color: 'var(--text-primary)', wordBreak: 'break-all' }}>
-                              {page.url}
-                            </span>
-                            <a 
-                              href={page.url} 
-                              target="_blank" 
-                              rel="noreferrer" 
-                              title="Open external link"
-                              style={{ color: 'var(--text-muted)' }}
-                            >
-                              <ExternalLink size={13} />
-                            </a>
-                          </div>
-                          <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '480px' }}>
-                            {page.title || 'Untitled Page'}
-                          </span>
+                paginatedItems.map((page) => (
+                  <tr key={page.url}>
+                    <td>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.15rem', minWidth: '220px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                          <span className="cell-url">{page.url}</span>
+                          <a href={page.url} target="_blank" rel="noreferrer" title="Open in new tab" className="ext-link">
+                            <ExternalLink size={13} />
+                          </a>
                         </div>
-                      </td>
+                        <span className="cell-sub" title={page.title}>{page.title || 'Untitled page'}</span>
+                      </div>
+                    </td>
 
-                      <td>
-                        <span className={`badge ${is2xx ? 'badge-200' : is4xx ? 'badge-404' : 'badge-300'}`}>
-                          {page.statusCode || 200}
-                        </span>
-                      </td>
+                    <td><StatusBadge page={page} /></td>
 
-                      <td>
-                        <select
-                          className="table-select"
-                          value={page.priority ?? 0.8}
-                          onChange={(e) => onUpdatePage(page.url, { priority: parseFloat(e.target.value) })}
+                    <td>
+                      <select
+                        className="table-select"
+                        aria-label="Priority"
+                        value={formatPriority(page.priority)}
+                        onChange={(e) => onUpdatePage(page.url, { priority: parseFloat(e.target.value) })}
+                      >
+                        {PRIORITY_OPTIONS.map(p => <option key={p} value={p}>{p}</option>)}
+                      </select>
+                    </td>
+
+                    <td>
+                      <select
+                        className="table-select"
+                        aria-label="Change frequency"
+                        value={CHANGEFREQ_OPTIONS.includes(page.changefreq) ? page.changefreq : 'weekly'}
+                        onChange={(e) => onUpdatePage(page.url, { changefreq: e.target.value })}
+                      >
+                        {CHANGEFREQ_OPTIONS.map(f => <option key={f} value={f}>{f}</option>)}
+                      </select>
+                    </td>
+
+                    <td><span className="cell-mono">L{page.depth ?? 1}</span></td>
+
+                    <td><span className="cell-mono">{page.loadTime > 0 ? `${page.loadTime} ms` : '—'}</span></td>
+
+                    <td style={{ textAlign: 'right' }}>
+                      <div style={{ display: 'flex', gap: '0.35rem', justifyContent: 'flex-end' }}>
+                        <button
+                          type="button"
+                          className="icon-btn"
+                          onClick={() => onInspectPage(page)}
+                          title="Inspect SEO tags"
+                          aria-label="Inspect SEO tags"
                         >
-                          <option value="1.0">1.0 (Highest)</option>
-                          <option value="0.9">0.9</option>
-                          <option value="0.8">0.8 (Default)</option>
-                          <option value="0.7">0.7</option>
-                          <option value="0.6">0.6</option>
-                          <option value="0.5">0.5</option>
-                          <option value="0.3">0.3</option>
-                          <option value="0.1">0.1 (Lowest)</option>
-                        </select>
-                      </td>
-
-                      <td>
-                        <select
-                          className="table-select"
-                          value={page.changefreq || 'weekly'}
-                          onChange={(e) => onUpdatePage(page.url, { changefreq: e.target.value })}
+                          <Eye size={15} />
+                        </button>
+                        <button
+                          type="button"
+                          className="icon-btn hover-danger"
+                          onClick={() => onDeletePage(page.url)}
+                          title="Remove from sitemap"
+                          aria-label="Remove from sitemap"
                         >
-                          <option value="always">always</option>
-                          <option value="hourly">hourly</option>
-                          <option value="daily">daily</option>
-                          <option value="weekly">weekly</option>
-                          <option value="monthly">monthly</option>
-                          <option value="yearly">yearly</option>
-                          <option value="never">never</option>
-                        </select>
-                      </td>
-
-                      <td>
-                        <span style={{ fontSize: '0.8rem', fontFamily: 'var(--font-mono)', color: 'var(--text-muted)' }}>
-                          L{page.depth ?? 1}
-                        </span>
-                      </td>
-
-                      <td>
-                        <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                          {page.loadTime ? `${page.loadTime}ms` : '--'}
-                        </span>
-                      </td>
-
-                      <td style={{ textAlign: 'right' }}>
-                        <div style={{ display: 'flex', gap: '0.4rem', justifyContent: 'flex-end' }}>
-                          <button
-                            className="icon-btn"
-                            onClick={() => onInspectPage(page)}
-                            title="Inspect SEO tags"
-                          >
-                            <Eye size={15} />
-                          </button>
-                          <button
-                            className="icon-btn hover-danger"
-                            onClick={() => onDeletePage(page.url)}
-                            title="Remove from sitemap"
-                          >
-                            <Trash2 size={15} />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })
+                          <Trash2 size={15} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))
               )}
             </tbody>
           </table>
@@ -501,107 +437,55 @@ export default function GeneratorTab({
               <tr>
                 <th style={{ width: '6%' }}>#</th>
                 <th style={{ width: '52%' }}>Skipped URL</th>
-                <th style={{ width: '24%' }}>Exclusion Reason</th>
-                <th style={{ width: '10%' }}>Detected</th>
+                <th style={{ width: '24%' }}>Reason</th>
+                <th style={{ width: '10%' }}>Found at</th>
                 <th style={{ width: '8%', textAlign: 'right' }}>Action</th>
               </tr>
             </thead>
             <tbody>
               {skippedPages.length === 0 ? (
-                <tr>
-                  <td colSpan={5} style={{ textAlign: 'center', padding: '3.5rem 1rem', color: 'var(--text-muted)' }}>
-                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.6rem' }}>
-                      <Check size={26} style={{ color: 'var(--accent-emerald)' }} />
-                      <span style={{ fontSize: '1rem', fontWeight: 600, color: 'var(--text-secondary)' }}>
-                        No skipped links recorded
-                      </span>
-                      <span style={{ fontSize: '0.85rem' }}>
-                        All candidate links found during crawling were included in your sitemap.
-                      </span>
-                    </div>
-                  </td>
-                </tr>
+                renderEmptyRow(5, <Check size={20} style={{ color: 'var(--accent-emerald)' }} />, 'Nothing skipped',
+                  'Every candidate link found during the crawl was included in your sitemap.')
               ) : filteredSkipped.length === 0 ? (
-                <tr>
-                  <td colSpan={5} style={{ textAlign: 'center', padding: '3rem 1rem', color: 'var(--text-muted)' }}>
-                    No skipped URLs match your search or filter.
-                  </td>
-                </tr>
+                renderEmptyRow(5, null, null, 'No skipped URLs match your search or filter.')
               ) : (
-                paginatedItems.map((item, index) => {
-                  const badgeStyle = getReasonBadgeStyle(item.reason);
-                  const globalIndex = startIndex + index + 1;
+                paginatedItems.map((item, index) => (
+                  <tr key={item.url}>
+                    <td><span className="cell-mono">{startIndex + index + 1}</span></td>
 
-                  return (
-                    <tr key={item.url + index}>
-                      <td>
-                        <span style={{ fontSize: '0.75rem', fontFamily: 'var(--font-mono)', color: 'var(--text-muted)' }}>
-                          {globalIndex}
-                        </span>
-                      </td>
+                    <td>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', minWidth: '220px' }}>
+                        <span className="cell-url">{item.url}</span>
+                        <a href={item.url} target="_blank" rel="noreferrer" title="Open in new tab" className="ext-link">
+                          <ExternalLink size={13} />
+                        </a>
+                      </div>
+                    </td>
 
-                      <td>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                          <span style={{ fontWeight: 600, color: 'var(--text-primary)', wordBreak: 'break-all', fontSize: '0.875rem' }}>
-                            {item.url}
-                          </span>
-                          <a 
-                            href={item.url} 
-                            target="_blank" 
-                            rel="noreferrer" 
-                            title="Open external link"
-                            style={{ color: 'var(--text-muted)' }}
-                          >
-                            <ExternalLink size={13} />
-                          </a>
-                        </div>
-                      </td>
+                    <td>
+                      <span className="badge" style={getReasonBadgeStyle(item.reason)}>
+                        {item.reason}
+                      </span>
+                    </td>
 
-                      <td>
-                        <span 
-                          className="badge" 
-                          style={{ 
-                            ...badgeStyle, 
-                            fontSize: '0.75rem', 
-                            padding: '0.2rem 0.6rem',
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            gap: '0.3rem'
-                          }}
+                    <td><span className="cell-mono">{item.timestamp || '—'}</span></td>
+
+                    <td style={{ textAlign: 'right' }}>
+                      {onIncludeSkipped && (
+                        <button
+                          type="button"
+                          className="btn btn-secondary"
+                          onClick={() => onIncludeSkipped(item)}
+                          title="Include this link in the sitemap"
+                          style={{ fontSize: '0.76rem', padding: '0.3rem 0.65rem' }}
                         >
-                          {item.reason}
-                        </span>
-                      </td>
-
-                      <td>
-                        <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
-                          {item.timestamp || 'Crawl'}
-                        </span>
-                      </td>
-
-                      <td style={{ textAlign: 'right' }}>
-                        {onIncludeSkipped && (
-                          <button
-                            type="button"
-                            className="btn btn-secondary"
-                            onClick={() => onIncludeSkipped(item)}
-                            title="Force include this link in sitemap"
-                            style={{ 
-                              fontSize: '0.75rem', 
-                              padding: '0.3rem 0.65rem', 
-                              color: 'var(--accent-emerald)', 
-                              borderColor: 'rgba(16, 185, 129, 0.4)',
-                              whiteSpace: 'nowrap'
-                            }}
-                          >
-                            <Plus size={13} />
-                            <span>Add</span>
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })
+                          <Plus size={13} />
+                          <span>Add</span>
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))
               )}
             </tbody>
           </table>
@@ -610,92 +494,40 @@ export default function GeneratorTab({
 
       {/* Pagination Footer Toolbar */}
       {totalItems > 0 && (
-        <div 
-          className="glass-panel" 
-          style={{ 
-            marginTop: '0.75rem', 
-            padding: '0.75rem 1.25rem', 
-            display: 'flex', 
-            justifyContent: 'space-between', 
-            alignItems: 'center', 
-            flexWrap: 'wrap', 
-            gap: '1rem' 
-          }}
-        >
-          <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-            Showing <b style={{ color: 'var(--text-primary)' }}>{startIndex + 1}</b> to <b style={{ color: 'var(--text-primary)' }}>{endIndex}</b> of <b style={{ color: 'var(--accent-cyan)' }}>{totalItems}</b> {subView === 'sitemap' ? 'pages' : 'skipped URLs'}
+        <div className="glass-panel pagination-bar">
+          <div>
+            Showing <b style={{ color: 'var(--text-primary)' }}>{startIndex + 1}–{endIndex}</b> of <b style={{ color: 'var(--text-primary)' }}>{totalItems}</b> {subView === 'sitemap' ? 'pages' : 'skipped URLs'}
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-            <button
-              type="button"
-              className="icon-btn"
-              disabled={validCurrentPage === 1}
-              onClick={() => setCurrentPage(1)}
-              title="First Page"
-              style={{ opacity: validCurrentPage === 1 ? 0.35 : 1, cursor: validCurrentPage === 1 ? 'not-allowed' : 'pointer' }}
-            >
-              <ChevronsLeft size={16} />
+          <div className="pagination-controls">
+            <button type="button" className="icon-btn" disabled={validCurrentPage === 1} onClick={() => setCurrentPage(1)} aria-label="First page">
+              <ChevronsLeft size={15} />
+            </button>
+            <button type="button" className="icon-btn" disabled={validCurrentPage === 1} onClick={() => setCurrentPage(validCurrentPage - 1)} aria-label="Previous page">
+              <ChevronLeft size={15} />
             </button>
 
-            <button
-              type="button"
-              className="icon-btn"
-              disabled={validCurrentPage === 1}
-              onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
-              title="Previous Page"
-              style={{ opacity: validCurrentPage === 1 ? 0.35 : 1, cursor: validCurrentPage === 1 ? 'not-allowed' : 'pointer' }}
-            >
-              <ChevronLeft size={16} />
-            </button>
-
-            {/* Page number buttons */}
             {getPageNumbers().map((num, i) => (
               num === '...' ? (
-                <span key={`ellipsis-${i}`} style={{ padding: '0 0.35rem', color: 'var(--text-muted)' }}>...</span>
+                <span key={`ellipsis-${i}`} style={{ padding: '0 0.3rem', color: 'var(--text-muted)' }}>…</span>
               ) : (
                 <button
                   key={num}
                   type="button"
+                  className={`page-btn ${num === validCurrentPage ? 'active' : ''}`}
+                  aria-current={num === validCurrentPage ? 'page' : undefined}
                   onClick={() => setCurrentPage(num)}
-                  style={{
-                    minWidth: '32px',
-                    height: '32px',
-                    borderRadius: '6px',
-                    border: num === validCurrentPage ? '1px solid var(--accent-cyan)' : '1px solid var(--border-subtle)',
-                    background: num === validCurrentPage ? 'rgba(6, 182, 212, 0.2)' : 'rgba(255, 255, 255, 0.03)',
-                    color: num === validCurrentPage ? 'var(--accent-cyan)' : 'var(--text-secondary)',
-                    fontWeight: num === validCurrentPage ? '700' : '500',
-                    fontSize: '0.85rem',
-                    cursor: 'pointer',
-                    transition: 'all 0.15s ease'
-                  }}
                 >
                   {num}
                 </button>
               )
             ))}
 
-            <button
-              type="button"
-              className="icon-btn"
-              disabled={validCurrentPage === totalPages}
-              onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
-              title="Next Page"
-              style={{ opacity: validCurrentPage === totalPages ? 0.35 : 1, cursor: validCurrentPage === totalPages ? 'not-allowed' : 'pointer' }}
-            >
-              <ChevronRight size={16} />
+            <button type="button" className="icon-btn" disabled={validCurrentPage === totalPages} onClick={() => setCurrentPage(validCurrentPage + 1)} aria-label="Next page">
+              <ChevronRight size={15} />
             </button>
-
-            <button
-              type="button"
-              className="icon-btn"
-              disabled={validCurrentPage === totalPages}
-              onClick={() => setCurrentPage(totalPages)}
-              title="Last Page"
-              style={{ opacity: validCurrentPage === totalPages ? 0.35 : 1, cursor: validCurrentPage === totalPages ? 'not-allowed' : 'pointer' }}
-            >
-              <ChevronsRight size={16} />
+            <button type="button" className="icon-btn" disabled={validCurrentPage === totalPages} onClick={() => setCurrentPage(totalPages)} aria-label="Last page">
+              <ChevronsRight size={15} />
             </button>
           </div>
         </div>

@@ -7,6 +7,9 @@ import VisualTreeTab from './components/Tabs/VisualTreeTab';
 import SeoAuditTab from './components/Tabs/SeoAuditTab';
 import XmlStudioTab from './components/Tabs/XmlStudioTab';
 import ValidatorTab from './components/Tabs/ValidatorTab';
+import SeoToolsTab from './components/Tabs/SeoToolsTab';
+import SchemaTab from './components/Tabs/SchemaTab';
+import RobotsTab from './components/Tabs/RobotsTab';
 import PageModal from './components/PageModal';
 import Toast from './components/Toast';
 import ProgressBar from './components/ProgressBar';
@@ -25,7 +28,7 @@ export default function App() {
   const [completionStats, setCompletionStats] = useState(null);
   const [skippedPages, setSkippedPages] = useState([]);
   const [toasts, setToasts] = useState([]);
-  const [isDark, setIsDark] = useState(true);
+  const [isDark, setIsDark] = useState(() => !document.body.classList.contains('theme-light'));
 
   const [crawlProgress, setCrawlProgress] = useState({
     current: 0,
@@ -71,30 +74,38 @@ export default function App() {
     setToasts(prev => prev.filter(t => t.id !== id));
   };
 
-  // Theme toggle
-  const toggleTheme = () => {
-    setIsDark(prev => {
-      const next = !prev;
-      if (next) {
-        document.body.classList.remove('theme-light');
-        document.body.classList.add('theme-dark');
-      } else {
-        document.body.classList.remove('theme-dark');
-        document.body.classList.add('theme-light');
-      }
-      return next;
-    });
-  };
+  // Theme: keep body class in sync and remember the choice
+  useEffect(() => {
+    document.body.classList.toggle('theme-dark', isDark);
+    document.body.classList.toggle('theme-light', !isDark);
+    try {
+      localStorage.setItem('sitemapflow-theme', isDark ? 'dark' : 'light');
+    } catch (e) {}
+  }, [isDark]);
+
+  const toggleTheme = () => setIsDark(prev => !prev);
 
   // Crawl Handlers
   const handleStartCrawl = (urlOverride) => {
     let finalUrl = (urlOverride || targetUrl).trim();
     if (!finalUrl) return;
 
-    if (!finalUrl.startsWith('http://') && !finalUrl.startsWith('https://')) {
+    if (!/^https?:\/\//i.test(finalUrl)) {
       finalUrl = 'https://' + finalUrl;
       setTargetUrl(finalUrl);
     }
+
+    try {
+      const parsed = new URL(finalUrl);
+      const host = parsed.hostname;
+      if (!host.includes('.') && host !== 'localhost' && !host.startsWith('[')) throw new Error();
+    } catch (e) {
+      addToast('That does not look like a valid website URL.', 'error');
+      return;
+    }
+
+    // Abort any previous run so its late callbacks can't leak into this one
+    if (crawlerRef.current) crawlerRef.current.abort();
 
     setIsCrawling(true);
     setPages([]); // reset current pages for fresh crawl
@@ -124,6 +135,7 @@ export default function App() {
       customCorsProxy: crawlConfig.customCorsProxy,
       restrictToPath: crawlConfig.restrictToPath,
       onPage: (newPage) => {
+        if (crawlerRef.current !== crawler) return;
         setPages(prev => {
           // Avoid duplicate URLs
           if (prev.some(p => p.url === newPage.url)) return prev;
@@ -131,6 +143,7 @@ export default function App() {
         });
       },
       onProgress: (prog) => {
+        if (crawlerRef.current !== crawler || crawler.isAborted) return;
         const percent = Math.min(100, Math.round((prog.current / (prog.total || crawlConfig.maxPages)) * 100));
         setCrawlProgress({
           current: prog.current,
@@ -141,11 +154,13 @@ export default function App() {
         });
       },
       onLog: (msg, type) => {
+        if (crawlerRef.current !== crawler) return;
         if (type === 'error') {
           addToast(msg, 'error');
         }
       },
       onComplete: (discoveredResult, maybeStats) => {
+        if (crawlerRef.current !== crawler) return;
         const discovered = Array.isArray(discoveredResult) ? discoveredResult : (discoveredResult?.pages || []);
         const stats = maybeStats || discoveredResult?.stats || {
           discovered: discovered.length,
@@ -158,7 +173,24 @@ export default function App() {
 
         const isSingleFailed = discovered.length === 1 && discovered[0]?.fetchFailed;
 
-        if (isSingleFailed) {
+        if (stats.aborted) {
+          // Stop handler already updated the UI; just keep the final count accurate
+          setCrawlProgress(prev => ({
+            ...prev,
+            current: discovered.length,
+            currentUrl: `Crawl stopped — ${discovered.length} pages collected`,
+            status: 'stopped'
+          }));
+        } else if (discovered.length === 0) {
+          setCrawlProgress({
+            current: 0,
+            total: 0,
+            percent: 100,
+            currentUrl: 'No pages could be added. Check the URL, robots/noindex settings or include/exclude patterns.',
+            status: 'warning'
+          });
+          addToast('Crawl finished but no pages were added.', 'warn');
+        } else if (isSingleFailed) {
           setCrawlProgress({
             current: 1,
             total: 1,
@@ -187,23 +219,26 @@ export default function App() {
     crawler.start();
   };
 
-  const handleStopCrawl = () => {
-    if (crawlerRef.current) {
-      crawlerRef.current.abort();
-      setIsCrawling(false);
-      setCrawlProgress(prev => ({ ...prev, status: 'completed' }));
-      addToast('Crawl stopped by user.', 'warn');
-    }
+  const handleStopCrawl = ({ silent = false } = {}) => {
+    if (!crawlerRef.current) return;
+    crawlerRef.current.abort();
+    if (silent) crawlerRef.current = null;
+    if (!isCrawling) return;
+    setIsCrawling(false);
+    setCrawlProgress(prev => ({ ...prev, currentUrl: 'Crawl stopped by user', status: 'stopped' }));
+    if (!silent) addToast('Crawl stopped by user.', 'warn');
   };
 
   const handleImportPages = (newPages) => {
-    if (isCrawling) handleStopCrawl();
+    handleStopCrawl({ silent: true });
+    setCompletionStats(null);
+    setSkippedPages([]);
     setPages(newPages);
     setCrawlProgress({
       current: newPages.length,
       total: newPages.length,
       percent: 100,
-      currentUrl: newPages[0]?.url || '',
+      currentUrl: `Imported ${newPages.length} pages from file`,
       status: 'completed'
     });
     if (newPages[0]?.url) {
@@ -224,14 +259,22 @@ export default function App() {
   };
 
   const handleAddPage = (newPage) => {
+    if (pages.some(p => p.url === newPage.url)) {
+      addToast('That URL is already in the sitemap.', 'warn');
+      return false;
+    }
     setPages(prev => [newPage, ...prev]);
     addToast(`Added ${newPage.url}`, 'success');
+    return true;
   };
 
   const handleIncludeSkipped = (skippedItem) => {
     let slug = 'Page';
+    let depth = 1;
     try {
-      slug = new URL(skippedItem.url).pathname.split('/').filter(Boolean).pop() || 'Resource';
+      const segments = new URL(skippedItem.url).pathname.split('/').filter(Boolean);
+      slug = segments[segments.length - 1] || 'Resource';
+      depth = segments.length;
     } catch (e) {}
     const inferredTitle = slug.replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
 
@@ -243,8 +286,9 @@ export default function App() {
       statusCode: 200,
       loadTime: 120,
       sizeKb: 20,
-      depth: 1,
+      depth,
       imagesCount: 0,
+      images: [],
       hasCanonical: true,
       isIndexable: true,
       lastmod: new Date().toISOString().split('T')[0],
@@ -252,13 +296,14 @@ export default function App() {
       priority: 0.6
     };
 
-    setPages(prev => [newPage, ...prev]);
+    setPages(prev => prev.some(p => p.url === newPage.url) ? prev : [newPage, ...prev]);
     setSkippedPages(prev => prev.filter(s => s.url !== skippedItem.url));
     addToast(`Added ${skippedItem.url} to sitemap!`, 'success');
   };
 
   const handleClearAll = () => {
-    if (isCrawling) handleStopCrawl();
+    handleStopCrawl({ silent: true });
+    setIsCrawling(false);
     setPages([]);
     setCompletionStats(null);
     setSkippedPages([]);
@@ -279,13 +324,8 @@ export default function App() {
   }, [pages, crawlConfig.includeImages]);
 
   return (
-    <>
-      {/* Background Ambience */}
-      <div className="bg-grid-pattern" />
-      <div className="glow-orb orb-1" />
-      <div className="glow-orb orb-2" />
-
-      {/* Navigation Bar */}
+    <div className="app-shell">
+      {/* Sidebar Navigation */}
       <Navbar
         activeTab={activeTab}
         setActiveTab={setActiveTab}
@@ -304,7 +344,7 @@ export default function App() {
           setTargetUrl={setTargetUrl}
           isCrawling={isCrawling}
           onStartCrawl={handleStartCrawl}
-          onStopCrawl={handleStopCrawl}
+          onStopCrawl={() => handleStopCrawl()}
           onImportPages={handleImportPages}
           onClearAll={handleClearAll}
           crawlConfig={crawlConfig}
@@ -353,17 +393,44 @@ export default function App() {
           />
         )}
 
-        {activeTab === 'xml' && (
-          <XmlStudioTab
+        {activeTab === 'tools' && (
+          <SeoToolsTab
+            pages={pages}
+            targetUrl={targetUrl}
+            addToast={addToast}
+            onInspectPage={setInspectedPage}
+          />
+        )}
+
+        {activeTab === 'schema' && (
+          <SchemaTab
             pages={pages}
             targetUrl={targetUrl}
             addToast={addToast}
           />
         )}
 
+        {activeTab === 'robots' && (
+          <RobotsTab
+            pages={pages}
+            targetUrl={targetUrl}
+            addToast={addToast}
+          />
+        )}
+
+        {activeTab === 'xml' && (
+          <XmlStudioTab
+            pages={pages}
+            targetUrl={targetUrl}
+            addToast={addToast}
+            defaultIncludeImages={crawlConfig.includeImages}
+          />
+        )}
+
         {activeTab === 'validator' && (
           <ValidatorTab
             currentXml={currentXml}
+            hasPages={pages.length > 0}
             addToast={addToast}
           />
         )}
@@ -382,6 +449,6 @@ export default function App() {
         toasts={toasts}
         removeToast={removeToast}
       />
-    </>
+    </div>
   );
 }

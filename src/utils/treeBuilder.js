@@ -54,7 +54,7 @@ export function buildDirectoryTree(pages = []) {
 
       if (!existingChild) {
         existingChild = {
-          id: `node-${accumulatedPath.replace(/[^a-zA-Z0-9]/g, '-')}`,
+          id: `node:${accumulatedPath}`,
           name: seg,
           path: accumulatedPath,
           isFolder: !isLast,
@@ -74,6 +74,17 @@ export function buildDirectoryTree(pages = []) {
 
     rootNode.pageCount++;
   });
+
+  // Folders first, then alphabetical, at every level
+  const sortChildren = (node) => {
+    node.children.sort((x, y) => {
+      const xFolder = x.children.length > 0 ? 0 : 1;
+      const yFolder = y.children.length > 0 ? 0 : 1;
+      return xFolder - yFolder || x.name.localeCompare(y.name, undefined, { numeric: true });
+    });
+    node.children.forEach(sortChildren);
+  };
+  sortChildren(rootNode);
 
   return rootNode;
 }

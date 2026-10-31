@@ -1,5 +1,5 @@
 import React from 'react';
-import { CheckCircle2, AlertTriangle } from 'lucide-react';
+import { CheckCircle2, AlertTriangle, PauseCircle } from 'lucide-react';
 
 export default function ProgressBar({ progress, isCrawling }) {
   if (!progress || (!isCrawling && progress.status === 'idle')) {
@@ -9,104 +9,52 @@ export default function ProgressBar({ progress, isCrawling }) {
   const { current = 0, total = 100, percent = 0, currentUrl = '', status = 'crawling' } = progress;
   const isDone = !isCrawling && status === 'completed';
   const isWarning = !isCrawling && status === 'warning';
+  const isStopped = !isCrawling && status === 'stopped';
+
+  const stateClass = isCrawling ? 'is-crawling' : isDone ? 'is-done' : isWarning ? 'is-warning' : 'is-stopped';
+  const accent = isDone ? 'var(--accent-emerald)' : isWarning || isStopped ? 'var(--accent-amber)' : 'var(--primary)';
+  const label = isDone ? 'Crawl finished' : isWarning ? 'Crawl notice' : isStopped ? 'Crawl stopped' : 'Crawling';
+  const fillWidth = isDone || isWarning ? 100 : Math.min(100, Math.max(0, percent));
 
   return (
-    <div className="glass-panel" style={{ padding: '1rem 1.25rem', display: 'flex', flexDirection: 'column', gap: '0.65rem', animation: 'fadeIn 0.25s ease' }}>
-      {/* Top info row */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', minWidth: 0, flex: 1 }}>
+    <div className={`glass-panel progress-card ${stateClass}`} role="status" aria-live="polite">
+      <div className="progress-row">
+        <div className="progress-label">
           {isDone ? (
-            <CheckCircle2 size={16} className="text-emerald" />
+            <CheckCircle2 size={16} style={{ color: accent, flexShrink: 0 }} />
           ) : isWarning ? (
-            <AlertTriangle size={16} style={{ color: 'var(--accent-amber, #f59e0b)' }} />
+            <AlertTriangle size={16} style={{ color: accent, flexShrink: 0 }} />
+          ) : isStopped ? (
+            <PauseCircle size={16} style={{ color: accent, flexShrink: 0 }} />
           ) : (
-            <span 
-              className="status-dot crawling" 
-              style={{ width: '10px', height: '10px', display: 'inline-block' }}
-            />
+            <span className="status-dot crawling" />
           )}
 
-          <span 
-            style={{ 
-              fontSize: '0.85rem', 
-              fontWeight: 700, 
-              color: isDone 
-                ? 'var(--accent-emerald)' 
-                : isWarning 
-                  ? 'var(--accent-amber, #f59e0b)' 
-                  : 'var(--accent-cyan)' 
-            }}
-          >
-            {isDone ? 'Crawl Finished:' : isWarning ? 'Crawl Notice:' : 'Live Crawling:'}
-          </span>
+          <strong style={{ color: accent }}>{label}</strong>
 
-          <span 
-            style={{ 
-              fontSize: '0.85rem', 
-              color: isWarning ? 'var(--accent-amber, #f59e0b)' : 'var(--text-secondary)', 
-              fontFamily: 'var(--font-mono)',
-              overflow: 'hidden', 
-              textOverflow: 'ellipsis', 
-              whiteSpace: 'nowrap',
-              maxWidth: '550px' 
-            }}
+          <span
+            className="progress-url"
+            style={isWarning ? { color: 'var(--accent-amber)', fontFamily: 'var(--font-sans)', whiteSpace: 'normal' } : undefined}
             title={currentUrl}
           >
-            {currentUrl || 'Initializing crawler queue...'}
+            {currentUrl || 'Initializing crawler queue…'}
           </span>
         </div>
 
-        {/* Counts & Percentage */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', fontSize: '0.85rem' }}>
-          <span style={{ color: 'var(--text-muted)' }}>
-            <b style={{ color: 'var(--text-primary)' }}>{current}</b> {isDone ? `pages added to sitemap` : `/ ${total} pages (limit)`}
+        <div className="progress-count">
+          <span>
+            <b>{current}</b> {isCrawling ? `/ ${total} page limit` : 'pages in sitemap'}
           </span>
-          <span 
-            className="badge" 
-            style={{ 
-              background: isDone 
-                ? 'rgba(16, 185, 129, 0.2)' 
-                : isWarning 
-                  ? 'rgba(245, 158, 11, 0.2)' 
-                  : 'rgba(6, 182, 212, 0.2)', 
-              color: isDone 
-                ? 'var(--accent-emerald)' 
-                : isWarning 
-                  ? 'var(--accent-amber, #f59e0b)' 
-                  : 'var(--accent-cyan)',
-              fontWeight: 800,
-              fontSize: '0.8rem',
-              padding: '0.2rem 0.55rem'
-            }}
-          >
-            {isDone ? '100%' : isWarning ? 'Check CORS' : `${percent}%`}
-          </span>
+          {!isWarning && (
+            <span className="badge" style={{ background: 'var(--surface-hover)', color: accent }}>
+              {isDone ? '100%' : `${percent}%`}
+            </span>
+          )}
         </div>
       </div>
 
-      {/* Progress track */}
-      <div 
-        style={{ 
-          width: '100%', 
-          height: '8px', 
-          background: 'rgba(255, 255, 255, 0.08)', 
-          borderRadius: '999px', 
-          overflow: 'hidden',
-          position: 'relative'
-        }}
-      >
-        <div 
-          style={{ 
-            height: '100%', 
-            width: `${isDone ? 100 : Math.min(100, Math.max(0, percent))}%`, 
-            background: isDone 
-              ? 'linear-gradient(90deg, #10b981, #06b6d4)' 
-              : 'linear-gradient(90deg, #6366f1, #06b6d4, #10b981)',
-            borderRadius: '999px', 
-            transition: 'width 0.25s cubic-bezier(0.4, 0, 0.2, 1)',
-            boxShadow: '0 0 10px rgba(6, 182, 212, 0.5)'
-          }} 
-        />
+      <div className="progress-track">
+        <div className="progress-fill" style={{ width: `${fillWidth}%` }} />
       </div>
     </div>
   );

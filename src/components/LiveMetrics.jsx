@@ -1,107 +1,115 @@
 import React from 'react';
-import { 
-  FileText, 
-  ShieldAlert, 
-  ShieldCheck, 
-  Zap, 
+import {
+  ShieldAlert,
+  ShieldCheck,
+  Zap,
   Layers,
-  CheckCircle2,
-  AlertCircle
+  Activity
 } from 'lucide-react';
+
+function MetricCard({ title, icon: Icon, iconColor, iconBg, value, unit, valueColor, subtitle, subtitleColor }) {
+  return (
+    <div className="metric-card glass-panel">
+      <div className="metric-top">
+        <span className="metric-title">{title}</span>
+        <div className="metric-icon-box" style={{ background: iconBg, color: iconColor }}>
+          <Icon size={16} />
+        </div>
+      </div>
+      <span className="metric-val" style={value === '–' ? { color: 'var(--text-muted)' } : valueColor ? { color: valueColor } : undefined}>
+        {value}
+        {unit && value !== '–' && <span className="metric-unit">{unit}</span>}
+      </span>
+      <span className="metric-subtitle" style={subtitleColor ? { color: subtitleColor } : undefined} title={subtitle}>
+        {subtitle}
+      </span>
+    </div>
+  );
+}
 
 export default function LiveMetrics({ pages = [], seoAudit, stats }) {
   const totalPages = pages.length;
-  const healthy2xx = pages.filter(p => !p.statusCode || (p.statusCode >= 200 && p.statusCode < 300)).length;
+  const hasPages = totalPages > 0;
+  const reachedPages = pages.filter(p => !p.fetchFailed);
+  const healthy2xx = reachedPages.filter(p => !p.statusCode || (p.statusCode >= 200 && p.statusCode < 300)).length;
   const broken4xx = pages.filter(p => p.statusCode && p.statusCode >= 400).length;
+  const unreachable = pages.length - reachedPages.length;
 
-  const avgSpeed = totalPages > 0
-    ? Math.round(pages.reduce((acc, p) => acc + (p.loadTime || 180), 0) / totalPages)
-    : 0;
+  // Only average real measurements (imported pages have no latency)
+  const timedPages = pages.filter(p => p.loadTime > 0 && !p.fetchFailed);
+  const avgSpeed = timedPages.length > 0
+    ? Math.round(timedPages.reduce((acc, p) => acc + p.loadTime, 0) / timedPages.length)
+    : null;
 
   const totalImages = pages.reduce((acc, p) => acc + (p.imagesCount || 0), 0);
-  const score = seoAudit?.score || 100;
+  const score = seoAudit?.score ?? 0;
+  const scoreGood = score >= 80;
 
-  // Clear subtitle showing breakdown
-  let card1Subtitle = 'Awaiting website crawl';
-  if (totalPages > 0) {
-    if (stats && (stats.skipped > 0 || (stats.discovered && stats.discovered > totalPages))) {
-      card1Subtitle = `${totalPages} added, ${stats.skipped} skipped (${stats.discovered} links scanned)`;
+  let pagesSubtitle = 'Awaiting a crawl or import';
+  if (hasPages) {
+    pagesSubtitle = stats && stats.skipped > 0
+      ? `${stats.skipped} skipped · ${stats.discovered} links scanned`
+      : `${totalImages} images found`;
+  }
+
+  let statusSubtitle = 'Ready to check links';
+  let statusSubtitleColor;
+  if (hasPages) {
+    if (broken4xx > 0) {
+      statusSubtitle = `${broken4xx} broken link${broken4xx === 1 ? '' : 's'} detected`;
+      statusSubtitleColor = 'var(--accent-red)';
+    } else if (unreachable > 0) {
+      statusSubtitle = `${unreachable} page${unreachable === 1 ? '' : 's'} not reachable`;
+      statusSubtitleColor = 'var(--accent-amber)';
     } else {
-      card1Subtitle = `${totalPages} indexed • ${totalImages} image tags`;
+      statusSubtitle = 'All pages reachable';
     }
   }
 
   return (
     <div className="metrics-grid">
-      {/* 1. Total Sitemap Pages */}
-      <div className="metric-card glass-panel">
-        <div className="metric-icon-box" style={{ background: 'rgba(99, 102, 241, 0.15)', color: 'var(--primary)' }}>
-          <Layers size={26} />
-        </div>
-        <div className="metric-content">
-          <span className="metric-title">Sitemap Pages</span>
-          <span className="metric-val">{totalPages}</span>
-          <span className="metric-subtitle">
-            {card1Subtitle}
-          </span>
-        </div>
-      </div>
+      <MetricCard
+        title="Sitemap pages"
+        icon={Layers}
+        iconBg="var(--primary-soft)"
+        iconColor="var(--primary)"
+        value={totalPages}
+        subtitle={pagesSubtitle}
+      />
 
-      {/* 2. SEO Health Score */}
-      <div className="metric-card glass-panel">
-        <div 
-          className="metric-icon-box" 
-          style={{ 
-            background: totalPages === 0 ? 'rgba(255, 255, 255, 0.05)' : score >= 80 ? 'rgba(16, 185, 129, 0.15)' : 'rgba(245, 158, 11, 0.15)', 
-            color: totalPages === 0 ? 'var(--text-muted)' : score >= 80 ? 'var(--accent-emerald)' : 'var(--accent-amber)' 
-          }}
-        >
-          {score >= 80 ? <ShieldCheck size={26} /> : <ShieldAlert size={26} />}
-        </div>
-        <div className="metric-content">
-          <span className="metric-title">SEO Health Score</span>
-          <span className="metric-val" style={{ color: totalPages === 0 ? 'var(--text-secondary)' : score >= 80 ? 'var(--accent-emerald)' : 'var(--accent-amber)' }}>
-            {totalPages > 0 ? `${score}/100` : '--/100'}
-          </span>
-          <span className="metric-subtitle">
-            {totalPages > 0 ? `${seoAudit?.criticalCount || 0} critical, ${seoAudit?.warningCount || 0} warnings` : 'Audit pending'}
-          </span>
-        </div>
-      </div>
+      <MetricCard
+        title="SEO health score"
+        icon={hasPages && !scoreGood ? ShieldAlert : ShieldCheck}
+        iconBg={!hasPages ? 'var(--surface-hover)' : scoreGood ? 'var(--success-soft)' : 'var(--warning-soft)'}
+        iconColor={!hasPages ? 'var(--text-muted)' : scoreGood ? 'var(--accent-emerald)' : 'var(--accent-amber)'}
+        value={hasPages ? score : '–'}
+        unit="/100"
+        valueColor={!hasPages ? 'var(--text-muted)' : scoreGood ? 'var(--accent-emerald)' : 'var(--accent-amber)'}
+        subtitle={hasPages ? `${seoAudit?.criticalCount || 0} critical · ${seoAudit?.warningCount || 0} warnings` : 'Audit pending'}
+      />
 
-      {/* 3. HTTP Health Ratio */}
-      <div className="metric-card glass-panel">
-        <div className="metric-icon-box" style={{ background: 'rgba(6, 182, 212, 0.15)', color: 'var(--accent-cyan)' }}>
-          <CheckCircle2 size={26} />
-        </div>
-        <div className="metric-content">
-          <span className="metric-title">HTTP Status Health</span>
-          <span className="metric-val text-cyan">
-            {healthy2xx} <span style={{ fontSize: '1rem', color: 'var(--text-muted)' }}>/ {totalPages}</span>
-          </span>
-          <span className="metric-subtitle" style={{ color: broken4xx > 0 ? 'var(--accent-red)' : 'var(--text-muted)' }}>
-            {totalPages === 0 ? 'Ready to check links' : broken4xx > 0 ? `${broken4xx} broken links detected` : '100% reachable status'}
-          </span>
-        </div>
-      </div>
+      <MetricCard
+        title="HTTP status health"
+        icon={Activity}
+        iconBg="var(--info-soft)"
+        iconColor="var(--accent-cyan)"
+        value={hasPages ? healthy2xx : '–'}
+        unit={hasPages ? ` / ${totalPages}` : undefined}
+        subtitle={statusSubtitle}
+        subtitleColor={statusSubtitleColor}
+      />
 
-      {/* 4. Avg Page Latency */}
-      <div className="metric-card glass-panel">
-        <div className="metric-icon-box" style={{ background: 'rgba(168, 85, 247, 0.15)', color: 'var(--accent-purple)' }}>
-          <Zap size={26} />
-        </div>
-        <div className="metric-content">
-          <span className="metric-title">Average Latency</span>
-          <span className="metric-val text-purple">
-            {totalPages > 0 ? avgSpeed : '--'} <span style={{ fontSize: '1rem' }}>ms</span>
-          </span>
-          <span className="metric-subtitle">
-            {totalPages > 0 
-              ? (avgSpeed < 450 ? '⚡ Ultra-fast turbo speed' : avgSpeed < 1200 ? '🚀 Fast network response' : 'Standard network latency') 
-              : 'Standby'}
-          </span>
-        </div>
-      </div>
+      <MetricCard
+        title="Average response time"
+        icon={Zap}
+        iconBg="var(--violet-soft)"
+        iconColor="var(--accent-purple)"
+        value={avgSpeed ?? '–'}
+        unit="ms"
+        subtitle={avgSpeed === null
+          ? (hasPages ? 'No timing data for imported pages' : 'Standby')
+          : avgSpeed < 450 ? 'Fast responses' : avgSpeed < 1200 ? 'Moderate responses (includes proxy time)' : 'Slow responses (includes proxy time)'}
+      />
     </div>
   );
 }

@@ -26,19 +26,21 @@ export function generateSitemapXml(pages, options = {}) {
       xml += `    <changefreq>${page.changefreq}</changefreq>\n`;
     }
     
-    if (page.priority !== undefined) {
-      xml += `    <priority>${Number(page.priority).toFixed(1)}</priority>\n`;
+    const priority = Number(page.priority);
+    if (page.priority !== undefined && page.priority !== null && !Number.isNaN(priority)) {
+      xml += `    <priority>${Math.min(1, Math.max(0, priority)).toFixed(1)}</priority>\n`;
     }
 
-    if (includeImages && page.imagesCount && page.imagesCount > 0) {
-      // Add sample image nodes if present
-      xml += `    <!-- Google Image Sitemap Extension (${page.imagesCount} images detected) -->\n`;
-      xml += '    <image:image>\n';
-      xml += `      <image:loc>${escapeXml(page.url)}/og-image.jpg</image:loc>\n`;
-      if (page.title) {
-        xml += `      <image:title>${escapeXml(page.title)}</image:title>\n`;
-      }
-      xml += '    </image:image>\n';
+    // Google Image Sitemap Extension: only real, absolute image URLs found on the page
+    if (includeImages && Array.isArray(page.images)) {
+      page.images
+        .filter(src => /^https?:\/\//i.test(src))
+        .slice(0, 1000)
+        .forEach(src => {
+          xml += '    <image:image>\n';
+          xml += `      <image:loc>${escapeXml(src)}</image:loc>\n`;
+          xml += '    </image:image>\n';
+        });
     }
 
     xml += '  </url>\n';
