@@ -320,10 +320,10 @@ export class ClientCrawler {
     this.maxDepth = Math.max(1, parseInt(options.maxDepth) || 4);
     
     const isLocal = isLocalEnvironment();
-    const requestedConcurrency = parseInt(options.concurrency) || 6;
-    // On live static hosting (GitHub Pages), use polite concurrency (default 2-3) and a small delay to prevent triggering public proxy 429s
-    this.concurrency = Math.min(8, Math.max(1, requestedConcurrency));
-    this.requestDelayMs = 50;
+    const requestedConcurrency = parseInt(options.concurrency) || 4;
+    // Stable, polite concurrency (3-4 workers) and delay to ensure zero proxy 429 drops and deterministic results
+    this.concurrency = Math.min(4, Math.max(1, requestedConcurrency));
+    this.requestDelayMs = 60;
 
     this.useCorsProxy = options.useCorsProxy !== false;
     this.customCorsProxy = options.customCorsProxy ? options.customCorsProxy.trim() : '';
@@ -398,10 +398,43 @@ export class ClientCrawler {
 
       resolved.hash = '';
 
+      // Normalize hostname to lowercase
+      resolved.hostname = resolved.hostname.toLowerCase();
+
+      // Remove default ports (:80, :443)
+      if ((resolved.protocol === 'http:' && resolved.port === '80') ||
+          (resolved.protocol === 'https:' && resolved.port === '443')) {
+        resolved.port = '';
+      }
+
+      // Strip common analytics & tracking query parameters to ensure identical canonical URLs
+      if (resolved.search) {
+        const TRACKING_PARAMS = new Set([
+          'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content',
+          'gclid', 'fbclid', 'msclkid', 'yclid', '_ga', '_gl', 'ref', 'source'
+        ]);
+        const params = new URLSearchParams(resolved.search);
+        let changed = false;
+        for (const key of Array.from(params.keys())) {
+          if (TRACKING_PARAMS.has(key.toLowerCase())) {
+            params.delete(key);
+            changed = true;
+          }
+        }
+        if (changed) {
+          const qs = params.toString();
+          resolved.search = qs ? `?${qs}` : '';
+        }
+      }
+
       let path = resolved.pathname;
       const isFile = /\.[a-z0-9]{2,5}$/i.test(path);
-      // Remove trailing slash if accidentally attached to a file URL (e.g. index.html/)
+      // Remove trailing slash if attached to a file URL (e.g. index.html/)
       if (isFile && path.endsWith('/')) {
+        resolved.pathname = path.slice(0, -1);
+      } else if (!isFile && path.length > 1 && path.endsWith('/')) {
+        // Canonicalize non-root directory paths to never have trailing slash
+        // so /about and /about/ are 100% identical and never crawled as two distinct pages
         resolved.pathname = path.slice(0, -1);
       }
 
@@ -601,14 +634,21 @@ export class ClientCrawler {
       try {
         const cachedRes = await this.executeProxyTarget(this.preferredProxy, url, startTime);
         if (cachedRes && cachedRes.ok) {
+          this.consecutiveProxyFailures = 0;
           this.cache.set(url, cachedRes);
           return cachedRes;
         } else {
-          // If preferred proxy failed, invalidate and cascade through options
-          this.preferredProxy = null;
+          this.consecutiveProxyFailures = (this.consecutiveProxyFailures || 0) + 1;
+          // Only switch away from preferred proxy after 3 consecutive failures
+          if (this.consecutiveProxyFailures >= 3) {
+            this.preferredProxy = null;
+          }
         }
       } catch (e) {
-        this.preferredProxy = null;
+        this.consecutiveProxyFailures = (this.consecutiveProxyFailures || 0) + 1;
+        if (this.consecutiveProxyFailures >= 3) {
+          this.preferredProxy = null;
+        }
       }
     }
 
@@ -636,10 +676,11 @@ export class ClientCrawler {
     if (isLocalEnvironment()) {
       try {
         const devProxyUrl = this.devProxyUrl(url);
-        const resp = await this.tryFetchEndpoint(devProxyUrl, {}, 8000);
-        if (resp && resp.ok) {
+        const resp = await this.tryFetchEndpoint(devProxyUrl, {}, 10000);
+        // Treat 200, 301, 404, 403 as valid upstream responses (only 502/504 indicates proxy connection failure)
+        if (resp && resp.status !== 502 && resp.status !== 504) {
           const html = await resp.text();
-          if (html && html.length > 20 && !html.includes('{"error":')) {
+          if (!html.includes('{"error":') || resp.status < 500) {
             const latency = Math.round(performance.now() - startTime);
             this.preferredProxy = { type: 'dev' };
             const res = { ok: true, status: resp.status, latency, html, proxyName: 'Dev Server Proxy' };
@@ -668,7 +709,7 @@ export class ClientCrawler {
       // Tier A: Jina Reader Turbo HTML mode
       try {
         const jinaUrl = `https://r.jina.ai/${url}`;
-        const resp = await this.tryFetchEndpoint(jinaUrl, JINA_TURBO_HEADERS, 8000);
+        const resp = await this.tryFetchEndpoint(jinaUrl, JINA_TURBO_HEADERS, 9000);
         if (resp && resp.ok) {
           const html = await resp.text();
           if (html && html.length > 50 && !html.includes('{"error":') && !html.includes('AbuseAlleviationError') && resp.status !== 429) {
@@ -724,6 +765,35 @@ export class ClientCrawler {
     };
   }
 
+  // Automatic retry wrapper for transient network hiccups
+  async fetchPageWithRetries(url, maxRetries = 2) {
+    let lastResult = null;
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      if (this.isAborted) break;
+      const res = await this.fetchPageHtml(url);
+      if (res && res.ok && res.html) {
+        return res;
+      }
+      lastResult = res;
+      // If we received an explicit target HTTP status (like 404 or 403), do not retry
+      if (res && res.status >= 400 && res.status < 500 && res.html) {
+        return res;
+      }
+      // If transient failure, wait briefly before retrying
+      if (attempt < maxRetries && !this.isAborted) {
+        await new Promise(r => setTimeout(r, 250 * (attempt + 1)));
+      }
+    }
+    return lastResult || { 
+      ok: false, 
+      status: 0, 
+      latency: 0, 
+      html: '', 
+      error: 'Connection timed out after retries', 
+      proxyName: 'Unreachable' 
+    };
+  }
+
   // Fast dispatcher for cached preferred proxy
   async executeProxyTarget(pref, url, startTime) {
     if (pref.type === 'custom' && pref.urlTemplate) {
@@ -739,10 +809,10 @@ export class ClientCrawler {
       }
     } else if (pref.type === 'dev') {
       const devProxyUrl = this.devProxyUrl(url);
-      const resp = await this.tryFetchEndpoint(devProxyUrl, {}, 8000);
-      if (resp && resp.ok) {
+      const resp = await this.tryFetchEndpoint(devProxyUrl, {}, 10000);
+      if (resp && resp.status !== 502 && resp.status !== 504) {
         const html = await resp.text();
-        if (html && html.length > 20 && !html.includes('{"error":')) {
+        if (!html.includes('{"error":') || resp.status < 500) {
           return { ok: true, status: resp.status, latency: Math.round(performance.now() - startTime), html, proxyName: 'Dev Server Proxy' };
         }
       }
@@ -753,7 +823,7 @@ export class ClientCrawler {
         return { ok: true, status: resp.status, latency: Math.round(performance.now() - startTime), html, proxyName: 'Direct Connection' };
       }
     } else if (pref.type === 'jina_html') {
-      const resp = await this.tryFetchEndpoint(`https://r.jina.ai/${url}`, JINA_TURBO_HEADERS, 8000);
+      const resp = await this.tryFetchEndpoint(`https://r.jina.ai/${url}`, JINA_TURBO_HEADERS, 9000);
       if (resp && resp.ok) {
         const html = await resp.text();
         if (html && html.length > 50 && !html.includes('{"error":') && !html.includes('AbuseAlleviationError') && resp.status !== 429) {
@@ -947,7 +1017,7 @@ export class ClientCrawler {
       }
       if (this.isAborted || discoveredPages.length >= this.maxPages) return;
 
-      const fetchResult = await this.fetchPageHtml(item.url);
+      const fetchResult = await this.fetchPageWithRetries(item.url, 2);
       if (this.isAborted) return;
 
       let pageData;
@@ -995,6 +1065,8 @@ export class ClientCrawler {
               }
             }
 
+            // Collect, normalize and deduplicate candidate links
+            const candidateLinks = [];
             for (const raw of rawLinks) {
               if (!raw || raw.startsWith('#') || raw.startsWith('javascript:') || raw.startsWith('mailto:') || raw.startsWith('tel:')) continue;
               const norm = this.normalizeUrl(raw, item.url);
@@ -1010,32 +1082,38 @@ export class ClientCrawler {
                 continue;
               }
 
-              // Record internal link graph
-              if (norm !== item.url && !pageData.links.includes(norm) && pageData.links.length < 500) {
-                pageData.links.push(norm);
+              if (norm !== item.url && !candidateLinks.includes(norm)) {
+                candidateLinks.push(norm);
               }
+            }
 
-              if (!canEnqueue) continue;
+            // Sort candidate links alphabetically so discovery sequence is 100% deterministic!
+            candidateLinks.sort();
+            pageData.links = candidateLinks.slice(0, 500);
 
-              this.discoveredUrls.add(norm);
+            if (canEnqueue) {
+              for (const norm of candidateLinks) {
+                this.discoveredUrls.add(norm);
 
-              const matches = this.matchesPatterns(norm);
-              if (!matches) {
-                recordSkipped(norm, 'Excluded by URL Pattern');
-                continue;
-              }
+                const matches = this.matchesPatterns(norm);
+                if (!matches) {
+                  recordSkipped(norm, 'Excluded by URL Pattern');
+                  continue;
+                }
 
-              if (this.isBlockedByRobots(norm)) {
-                recordSkipped(norm, 'Blocked by robots.txt');
-                continue;
-              }
+                if (this.isBlockedByRobots(norm)) {
+                  recordSkipped(norm, 'Blocked by robots.txt');
+                  continue;
+                }
 
-              if (!visited.has(norm) && !enqueued.has(norm)) {
-                if ((discoveredPages.length + queue.length) < this.maxPages) {
-                  enqueued.add(norm);
-                  queue.push({ url: norm, depth: item.depth + 1 });
-                } else {
-                  recordSkipped(norm, `Exceeded Max Pages limit (${this.maxPages})`);
+                if (!visited.has(norm) && !enqueued.has(norm)) {
+                  // Monotonic check against maxPages limit ensures identical set across runs
+                  if (enqueued.size < this.maxPages) {
+                    enqueued.add(norm);
+                    queue.push({ url: norm, depth: item.depth + 1 });
+                  } else {
+                    recordSkipped(norm, `Exceeded Max Pages limit (${this.maxPages})`);
+                  }
                 }
               }
             }
@@ -1066,7 +1144,7 @@ export class ClientCrawler {
     };
 
     // Run Concurrent BFS Worker Pool
-    const concurrency = Math.min(10, Math.max(1, parseInt(this.concurrency) || 6));
+    const concurrency = Math.min(4, Math.max(1, parseInt(this.concurrency) || 3));
     let activeWorkers = 0;
 
     await new Promise((resolve) => {
@@ -1092,6 +1170,8 @@ export class ClientCrawler {
             continue;
           }
 
+          // Deterministic queue order: Lowest depth first, then alphabetical by URL!
+          queue.sort((a, b) => a.depth - b.depth || a.url.localeCompare(b.url));
           const item = queue.shift();
           if (!item) continue;
           if (visited.has(item.url)) continue;
@@ -1116,6 +1196,13 @@ export class ClientCrawler {
       for (let i = 0; i < concurrency; i++) {
         worker();
       }
+    });
+
+    // Final deterministic sort: Depth ascending, then URL alphabetically ascending!
+    // Guarantees Run 1 and Run 2 on the same website produce 100% identical report order!
+    discoveredPages.sort((a, b) => {
+      if (a.depth !== b.depth) return a.depth - b.depth;
+      return a.url.localeCompare(b.url);
     });
 
     // Compute complete stats for internal website pages

@@ -170,6 +170,10 @@ export default function App() {
         setIsCrawling(false);
         setCompletionStats(stats);
         setSkippedPages(stats.skippedPages || discoveredResult?.skippedPages || []);
+        // Guarantee state has the final deterministically sorted pages array
+        if (discovered.length > 0) {
+          setPages(discovered);
+        }
 
         const isSingleFailed = discovered.length === 1 && discovered[0]?.fetchFailed;
 

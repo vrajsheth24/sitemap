@@ -303,13 +303,13 @@ export function runSeoAudit(pages = []) {
         breakdown.images.passed++;
       }
 
-      // 7. Response Time & Speed
-      if (page.loadTime && page.loadTime > 600) {
+      // 7. Response Time & Speed (threshold for genuine server bottlenecks)
+      if (page.loadTime && page.loadTime > 2500) {
         pageIssues.push({
           pillar: 'seo',
           type: 'warning',
           category: 'Performance',
-          message: `High server response latency detected (${page.loadTime}ms).`,
+          message: `Extreme server response latency detected (${page.loadTime}ms).`,
           recommendation: 'Optimize server response time (TTFB), leverage CDN caching, and compress static assets.'
         });
         breakdown.performance.failed++;
@@ -487,9 +487,16 @@ export function runSeoAudit(pages = []) {
   // Overall Weighted Score: 45% SEO, 30% AEO, 25% GEO
   const overallScore = Math.round(seoScore * 0.45 + aeoScore * 0.30 + geoScore * 0.25);
 
-  // Group issues by pillar and severity
+  // Group issues by pillar and severity with 100% deterministic secondary sorting
   const severityRank = { critical: 0, warning: 1, info: 2 };
-  issues.sort((a, b) => severityRank[a.type] - severityRank[b.type]);
+  issues.sort((a, b) => {
+    if (severityRank[a.type] !== severityRank[b.type]) {
+      return severityRank[a.type] - severityRank[b.type];
+    }
+    const urlCmp = (a.url || '').localeCompare(b.url || '');
+    if (urlCmp !== 0) return urlCmp;
+    return (a.category || '').localeCompare(b.category || '');
+  });
 
   const seoIssues = issues.filter(i => i.pillar === 'seo');
   const aeoIssues = issues.filter(i => i.pillar === 'aeo');
