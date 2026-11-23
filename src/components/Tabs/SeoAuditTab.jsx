@@ -21,9 +21,11 @@ import {
   Copy,
   Check,
   X,
-  ListFilter
+  ListFilter,
+  FileSpreadsheet
 } from 'lucide-react';
 import { fetchSinglePage } from '../../utils/clientCrawler';
+import { exportAuditToExcel } from '../../utils/auditExport';
 
 const ISSUE_PAGE_SIZE = 40;
 
@@ -110,6 +112,7 @@ export default function SeoAuditTab({
   seoAudit,
   onInspectUrl,
   pages = [],
+  targetUrl = '',
   onUpdatePage,
   addToast
 }) {
@@ -167,8 +170,34 @@ export default function SeoAuditTab({
     if (addToast) addToast(`Live audit complete! Refreshed data for ${pages.length} pages.`, 'success');
   };
 
-  // Export Full Audit Report (Markdown / HTML)
+  // Export Full Audit Report (Excel .xlsx with multi-sheet workbook)
   const handleExportReport = () => {
+    if (!pages || pages.length === 0) return;
+
+    let derivedHost = targetUrl;
+    if (!derivedHost && pages.length > 0) {
+      try {
+        derivedHost = new URL(pages[0].url).hostname;
+      } catch (e) {
+        derivedHost = 'website';
+      }
+    }
+
+    try {
+      const { filename } = exportAuditToExcel({
+        seoAudit,
+        pages,
+        hostname: derivedHost
+      });
+      if (addToast) addToast(`Full audit report downloaded as Excel (${filename})!`, 'success');
+    } catch (err) {
+      console.error('Failed to export Excel report:', err);
+      if (addToast) addToast('Error generating Excel report', 'error');
+    }
+  };
+
+  // Optional: Export Markdown report
+  const handleExportMarkdown = () => {
     if (!pages || pages.length === 0) return;
 
     const dateStr = new Date().toLocaleDateString();
@@ -185,9 +214,10 @@ export default function SeoAuditTab({
 
     md += `## Detailed Findings (${issues.length})\n\n`;
     issues.forEach((iss, idx) => {
-      md += `### ${idx + 1}. [${iss.pillar.toUpperCase()}] ${iss.message}\n`;
-      md += `- **Severity:** ${iss.type.toUpperCase()}\n`;
-      md += `- **Category:** ${iss.category}\n`;
+      md += `### ${idx + 1}. [${(iss.pillar || 'SEO').toUpperCase()}] ${iss.message}\n`;
+      md += `- **Severity:** ${(iss.type || 'warning').toUpperCase()}\n`;
+      md += `- **Category:** ${iss.category || 'General'}\n`;
+      if (iss.detail) md += `- **Detail:** ${iss.detail}\n`;
       md += `- **URL:** ${iss.url}\n`;
       md += `- **Recommendation:** ${iss.recommendation}\n\n`;
     });
@@ -239,18 +269,35 @@ export default function SeoAuditTab({
   const groupedIssues = useMemo(() => {
     const groupsMap = new Map();
     filteredIssues.forEach(issue => {
-      const key = `${issue.pillar}::${issue.type}::${issue.category}::${issue.message}`;
+      // Normalize issue messages so dynamic counts (e.g. 184 chars vs 187 chars, or 3660ms) group into ONE card!
+      const normalizedTitle = (issue.message || '')
+        .replace(/\s*\(\d+[\s\w]*\)/g, '')
+        .replace(/:\s*https?:\/\/\S+/g, '')
+        .replace(/^\d+\s+image\(s\)\s+/i, 'Images ')
+        .replace(/\s*\.\s*$/, '')
+        .trim();
+
+      const key = issue.code || `${issue.pillar}::${issue.type}::${issue.category}::${normalizedTitle}`;
       if (!groupsMap.has(key)) {
         groupsMap.set(key, {
           key,
           pillar: issue.pillar,
           type: issue.type,
           category: issue.category,
-          message: issue.message,
+          message: issue.message.includes('(') && !issue.message.includes('+') && !issue.message.includes('>') && !issue.message.includes('<')
+            ? `${normalizedTitle}.`
+            : issue.message,
           recommendation: issue.recommendation,
+          items: [],
           urls: []
         });
       }
+
+      const itemDetail = issue.detail || (issue.message.match(/\((\d+[\s\w]*)\)/)?.[1] || '');
+      groupsMap.get(key).items.push({
+        url: issue.url,
+        detail: itemDetail
+      });
       groupsMap.get(key).urls.push(issue.url);
     });
 
@@ -258,7 +305,7 @@ export default function SeoAuditTab({
     return Array.from(groupsMap.values()).sort((a, b) => {
       const diff = (severityWeight[b.type] || 0) - (severityWeight[a.type] || 0);
       if (diff !== 0) return diff;
-      return b.urls.length - a.urls.length;
+      return b.items.length - a.items.length;
     });
   }, [filteredIssues]);
 
@@ -341,10 +388,22 @@ export default function SeoAuditTab({
             type="button"
             className="btn btn-secondary"
             onClick={handleExportReport}
-            title="Download full Markdown audit report"
+            title="Download complete 4-sheet Excel audit report (.xlsx)"
+            style={{ fontWeight: 600 }}
           >
-            <Download size={15} />
-            <span>Export Report</span>
+            <FileSpreadsheet size={15} style={{ color: 'var(--accent-emerald)' }} />
+            <span>Export Report (.xlsx)</span>
+          </button>
+
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={handleExportMarkdown}
+            title="Download audit report as Markdown (.md)"
+            style={{ padding: '0.45rem 0.65rem' }}
+          >
+            <Download size={14} />
+            <span style={{ fontSize: '0.78rem' }}>.MD</span>
           </button>
 
           <button
@@ -768,13 +827,22 @@ export default function SeoAuditTab({
                       </div>
 
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', maxHeight: '320px', overflowY: 'auto' }}>
-                        {group.urls.map((url, uIdx) => {
+                        {(group.items || group.urls.map(u => ({ url: u }))).map((item, uIdx) => {
+                          const url = typeof item === 'string' ? item : item.url;
+                          const detail = typeof item === 'object' ? item.detail : '';
                           const matchedPage = pages.find(p => p.url === url);
                           return (
                             <div key={`${url}-${uIdx}`} className="issue-url-item">
-                              <span style={{ fontSize: '0.8rem', fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                {url}
-                              </span>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '0.55rem', minWidth: 0, flex: 1 }}>
+                                <span style={{ fontSize: '0.8rem', fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                  {url}
+                                </span>
+                                {detail && (
+                                  <span className="badge badge-muted" style={{ fontSize: '0.7rem', padding: '0.1rem 0.45rem', flexShrink: 0 }}>
+                                    {detail}
+                                  </span>
+                                )}
+                              </div>
                               <button
                                 type="button"
                                 className="btn btn-secondary"

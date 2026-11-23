@@ -16,8 +16,9 @@ import {
   generateUrlListTxt, 
   generateSeoCsv 
 } from '../../utils/xmlGenerator';
+import { exportAuditToExcel } from '../../utils/auditExport';
 
-export default function XmlStudioTab({ pages, targetUrl, addToast, defaultIncludeImages = true }) {
+export default function XmlStudioTab({ pages, targetUrl, seoAudit, addToast, defaultIncludeImages = true }) {
   const [activeSubtab, setActiveSubtab] = useState('xml');
   const [includeImages, setIncludeImages] = useState(defaultIncludeImages);
   const [copied, setCopied] = useState(false);
@@ -79,6 +80,27 @@ export default function XmlStudioTab({ pages, targetUrl, addToast, defaultInclud
       content = generateSeoCsv(pages);
       filename = 'seo-audit.csv';
       mimeType = 'text/csv';
+    } else if (type === 'xlsx') {
+      let derivedHost = targetUrl;
+      if (!derivedHost && pages.length > 0) {
+        try {
+          derivedHost = new URL(pages[0].url).hostname;
+        } catch (e) {
+          derivedHost = 'website';
+        }
+      }
+      try {
+        const { filename } = exportAuditToExcel({
+          seoAudit,
+          pages,
+          hostname: derivedHost
+        });
+        addToast(`Downloaded Excel audit report (${filename})`, 'success');
+      } catch (err) {
+        console.error('Failed to export Excel report:', err);
+        addToast('Failed to export Excel report', 'error');
+      }
+      return;
     } else if (type === 'json') {
       content = JSON.stringify(pages, null, 2);
       filename = 'sitemap.json';
@@ -147,6 +169,10 @@ export default function XmlStudioTab({ pages, targetUrl, addToast, defaultInclud
           <button type="button" className="btn btn-secondary" onClick={() => handleDownload('txt')} disabled={pages.length === 0} title="Plain list of URLs" style={{ fontSize: '0.8rem', padding: '0.4rem 0.75rem' }}>
             <List size={14} />
             <span>TXT</span>
+          </button>
+          <button type="button" className="btn btn-secondary" onClick={() => handleDownload('xlsx')} disabled={pages.length === 0} title="Comprehensive multi-sheet Excel audit report (.xlsx)" style={{ fontSize: '0.8rem', padding: '0.4rem 0.75rem', fontWeight: 600 }}>
+            <FileSpreadsheet size={14} style={{ color: 'var(--accent-emerald)' }} />
+            <span>XLSX (Full Audit)</span>
           </button>
           <button type="button" className="btn btn-secondary" onClick={() => handleDownload('csv')} disabled={pages.length === 0} title="SEO audit spreadsheet" style={{ fontSize: '0.8rem', padding: '0.4rem 0.75rem' }}>
             <FileSpreadsheet size={14} />

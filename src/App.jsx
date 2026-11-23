@@ -394,6 +394,7 @@ export default function App() {
             seoAudit={seoAudit}
             onInspectUrl={setInspectedPage}
             pages={pages}
+            targetUrl={targetUrl}
             onUpdatePage={handleUpdatePage}
             addToast={addToast}
           />
@@ -428,6 +429,7 @@ export default function App() {
           <XmlStudioTab
             pages={pages}
             targetUrl={targetUrl}
+            seoAudit={seoAudit}
             addToast={addToast}
             defaultIncludeImages={crawlConfig.includeImages}
           />

@@ -150,6 +150,7 @@ export function runSeoAudit(pages = []) {
         pageIssues.push({
           pillar: 'seo',
           type: 'critical',
+          code: 'TITLE_MISSING',
           category: 'Page Title',
           message: 'Missing <title> tag entirely.',
           recommendation: 'Add a distinct, keyword-targeted <title> between 30 and 60 characters.'
@@ -160,8 +161,10 @@ export function runSeoAudit(pages = []) {
         pageIssues.push({
           pillar: 'seo',
           type: 'warning',
+          code: 'TITLE_TOO_SHORT',
           category: 'Page Title',
-          message: `Title is unusually short (${page.title.length} characters).`,
+          message: 'Title is unusually short (<25 chars).',
+          detail: `${page.title.length} chars`,
           recommendation: 'Expand title to 35-60 characters for optimal click-through rates in SERPs.'
         });
         breakdown.titles.failed++;
@@ -170,8 +173,10 @@ export function runSeoAudit(pages = []) {
         pageIssues.push({
           pillar: 'seo',
           type: 'warning',
+          code: 'TITLE_TOO_LONG',
           category: 'Page Title',
-          message: `Title exceeds standard SERP truncation limit (${page.title.length} chars).`,
+          message: 'Title exceeds standard SERP truncation limit (65+ chars).',
+          detail: `${page.title.length} chars`,
           recommendation: 'Keep titles under 60-65 characters to prevent snippet ellipsis in Google and Bing.'
         });
         breakdown.titles.failed++;
@@ -185,6 +190,7 @@ export function runSeoAudit(pages = []) {
         pageIssues.push({
           pillar: 'seo',
           type: 'warning',
+          code: 'TITLE_DUPLICATE',
           category: 'Page Title',
           message: 'Duplicate title tag detected across multiple pages.',
           recommendation: 'Every indexed page should have a unique, descriptive title tag to avoid internal keyword cannibalization.'
@@ -197,8 +203,9 @@ export function runSeoAudit(pages = []) {
         pageIssues.push({
           pillar: 'seo',
           type: 'warning',
+          code: 'DESC_MISSING',
           category: 'Meta Description',
-          message: 'Missing meta description.',
+          message: 'Missing meta description tag.',
           recommendation: 'Provide a compelling 120-160 character description summarizing the page value proposition.'
         });
         breakdown.descriptions.failed++;
@@ -207,8 +214,10 @@ export function runSeoAudit(pages = []) {
         pageIssues.push({
           pillar: 'seo',
           type: 'warning',
+          code: 'DESC_TOO_SHORT',
           category: 'Meta Description',
-          message: `Meta description is too short (${page.description.length} chars).`,
+          message: 'Meta description is unusually short (<60 chars).',
+          detail: `${page.description.length} chars`,
           recommendation: 'Elaborate between 120 and 160 characters for rich, informative SERP snippets.'
         });
         breakdown.descriptions.failed++;
@@ -217,8 +226,10 @@ export function runSeoAudit(pages = []) {
         pageIssues.push({
           pillar: 'seo',
           type: 'warning',
+          code: 'DESC_TOO_LONG',
           category: 'Meta Description',
-          message: `Meta description exceeds standard snippet length (${page.description.length} chars).`,
+          message: 'Meta description exceeds standard snippet length (160+ chars).',
+          detail: `${page.description.length} chars`,
           recommendation: 'Keep descriptions under 160 characters to avoid truncation on mobile and desktop search results.'
         });
         breakdown.descriptions.failed++;
@@ -232,6 +243,7 @@ export function runSeoAudit(pages = []) {
         pageIssues.push({
           pillar: 'seo',
           type: 'warning',
+          code: 'DESC_DUPLICATE',
           category: 'Meta Description',
           message: 'Duplicate meta description shared across multiple pages.',
           recommendation: 'Craft unique meta descriptions tailored to the individual topic of each URL.'
@@ -244,6 +256,7 @@ export function runSeoAudit(pages = []) {
         pageIssues.push({
           pillar: 'seo',
           type: 'critical',
+          code: 'H1_MISSING',
           category: 'Heading Structure',
           message: 'Missing primary <h1> heading tag.',
           recommendation: 'Every indexable page must contain exactly one prominent <h1> tag matching user search intent.'
@@ -254,8 +267,10 @@ export function runSeoAudit(pages = []) {
         pageIssues.push({
           pillar: 'seo',
           type: 'warning',
+          code: 'H1_MULTIPLE',
           category: 'Heading Structure',
-          message: `Multiple <h1> headings detected (${page.h1Count} found).`,
+          message: 'Multiple <h1> headings detected on single page.',
+          detail: `${page.h1Count} H1 tags`,
           recommendation: 'Best practice is to maintain a single <h1> heading per page and structure subtopics with <h2> and <h3>.'
         });
         breakdown.h1.failed++;
@@ -269,6 +284,7 @@ export function runSeoAudit(pages = []) {
         pageIssues.push({
           pillar: 'seo',
           type: 'warning',
+          code: 'CANONICAL_MISSING',
           category: 'Canonical URL',
           message: 'No canonical URL specified (<link rel="canonical">).',
           recommendation: 'Add self-referencing canonical tag to guard against duplicate content penalties across query params.'
@@ -279,8 +295,10 @@ export function runSeoAudit(pages = []) {
         pageIssues.push({
           pillar: 'seo',
           type: 'info',
+          code: 'CANONICAL_MISMATCH',
           category: 'Canonical URL',
-          message: `Canonical points to alternate URL: ${page.canonicalHref}`,
+          message: 'Canonical tag points to an alternate URL.',
+          detail: page.canonicalHref,
           recommendation: 'Ensure this cross-URL canonical is deliberate to avoid unintentional indexing suppression.'
         });
         breakdown.canonical.passed++;
@@ -293,8 +311,10 @@ export function runSeoAudit(pages = []) {
         pageIssues.push({
           pillar: 'seo',
           type: 'warning',
+          code: 'IMAGE_MISSING_ALT',
           category: 'Image Optimization',
-          message: `${page.missingAltCount} image(s) missing descriptive alt text.`,
+          message: 'Images missing descriptive alt text.',
+          detail: `${page.missingAltCount} missing alts`,
           recommendation: 'Provide concise, descriptive alt attributes for accessibility compliance (WCAG) and Google Image SEO.'
         });
         breakdown.images.failed++;
@@ -308,8 +328,10 @@ export function runSeoAudit(pages = []) {
         pageIssues.push({
           pillar: 'seo',
           type: 'warning',
+          code: 'SLOW_LATENCY',
           category: 'Performance',
-          message: `Extreme server response latency detected (${page.loadTime}ms).`,
+          message: 'Extreme server response latency detected (>2500ms).',
+          detail: `${page.loadTime}ms`,
           recommendation: 'Optimize server response time (TTFB), leverage CDN caching, and compress static assets.'
         });
         breakdown.performance.failed++;
@@ -423,8 +445,10 @@ export function runSeoAudit(pages = []) {
         pageIssues.push({
           pillar: 'geo',
           type: 'warning',
+          code: 'THIN_CONTENT',
           category: 'Topical Depth',
-          message: `Thin content detected (${page.wordCount} words).`,
+          message: 'Thin page content detected (<300 words).',
+          detail: `${page.wordCount} words`,
           recommendation: 'Expand content with comprehensive explanations, examples, and technical nuances. Generative engines favor in-depth authoritative resources.'
         });
         breakdown.topicalDepth.failed++;
