@@ -6,7 +6,37 @@ import { parseRobotsTxt, getRulesForAgent, checkUrlAgainstRules } from './robots
 export function isLocalEnvironment() {
   if (typeof window === 'undefined') return true;
   const host = window.location.hostname;
-  return host === 'localhost' || host === '127.0.0.1' || host === '[::1]' || host.endsWith('.local');
+  const port = window.location.port;
+  return host === 'localhost' ||
+    host === '127.0.0.1' ||
+    host === '[::1]' ||
+    host.endsWith('.local') ||
+    /^192\.168\./.test(host) ||
+    /^10\./.test(host) ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(host) ||
+    port === '5173' ||
+    port === '4173';
+}
+
+export function decodeHtmlEntities(str) {
+  if (!str || typeof str !== 'string') return '';
+  return str
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;|&apos;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&#(\d+);/g, (_, dec) => String.fromCharCode(dec))
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+export function isValidHtmlResponse(text, status) {
+  if (!text || text.length < 30 || status === 429 || status === 502 || status === 504) return false;
+  if (text.startsWith('{') && /"code"\s*:\s*429|"RateLimitTriggeredError"|"error"\s*:|AbuseAlleviationError/i.test(text)) {
+    return false;
+  }
+  return true;
 }
 
 const JINA_TURBO_HEADERS = {
@@ -19,46 +49,103 @@ const JINA_TURBO_HEADERS = {
 
 // ---------------------------------------------------------------------------
 // Comprehensive on-page metadata extractor for SEO, AEO, and GEO signals
+// Dual Extraction Engine: DOMParser + Robust Regex Fallbacks (Zero Missed Tags)
 // ---------------------------------------------------------------------------
 export function extractPageMetadata(fetchResult, url, depth = 1, hostname = '') {
+  let rawHtml = fetchResult.html || '';
+
+  // 0. Detect JSON proxy errors masquerading as HTML
+  if (rawHtml.startsWith('{') && /"code"\s*:\s*429|"RateLimitTriggeredError"|"error"\s*:|AbuseAlleviationError/i.test(rawHtml)) {
+    return createUnreachedPageObject(url, depth, 'Proxy rate limit or service error', fetchResult.latency);
+  }
+
+  // Strip proxy shell artifacts (e.g. Jina inserting <html lang="en"><head></head><body></body>)
+  rawHtml = rawHtml.replace(/^<html[^>]*>\s*<head>\s*<\/head>\s*<body>\s*<\/body>\s*/i, '');
+
   let doc = null;
-  if (typeof DOMParser !== 'undefined' && !fetchResult.isMarkdown && fetchResult.html) {
+  if (typeof DOMParser !== 'undefined' && !fetchResult.isMarkdown && rawHtml) {
     try {
       const parser = new DOMParser();
-      doc = parser.parseFromString(fetchResult.html, 'text/html');
+      doc = parser.parseFromString(rawHtml, 'text/html');
     } catch (e) {
       doc = null;
     }
   }
 
-  // 1. Title
-  const rawTitle = doc?.querySelector('title')?.textContent?.trim()
-    || fetchResult.html?.match(/^Title:\s*(.+)$/im)?.[1]?.trim()
-    || fetchResult.html?.match(/^#\s+(.+)$/im)?.[1]?.trim()
-    || '';
+  // 1. Title (DOMParser + Regex fallback + entity decoding)
+  let rawTitle = doc?.querySelector('title')?.textContent?.trim() || '';
+  if (!rawTitle) {
+    const m = rawHtml.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+    if (m) rawTitle = m[1].replace(/<[^>]+>/g, '').trim();
+  }
+  if (!rawTitle) {
+    rawTitle = rawHtml.match(/^Title:\s*(.+)$/im)?.[1]?.trim()
+      || rawHtml.match(/^#\s+(.+)$/im)?.[1]?.trim()
+      || '';
+  }
+  rawTitle = decodeHtmlEntities(rawTitle);
 
-  // 2. Meta description
-  const metaDescTag = doc?.querySelector('meta[name="description"]')?.getAttribute('content')?.trim()
-    || doc?.querySelector('meta[property="og:description"]')?.getAttribute('content')?.trim()
-    || doc?.querySelector('meta[name="twitter:description"]')?.getAttribute('content')?.trim()
-    || fetchResult.html?.match(/^Description:\s*(.+)$/im)?.[1]?.trim();
+  // 2. Meta description (DOMParser + Regex fallback with backreference \1)
+  let metaDescTag = doc?.querySelector('meta[name="description" i]')?.getAttribute('content')?.trim()
+    || doc?.querySelector('meta[content][name="description" i]')?.getAttribute('content')?.trim()
+    || doc?.querySelector('meta[property="og:description" i]')?.getAttribute('content')?.trim()
+    || doc?.querySelector('meta[name="twitter:description" i]')?.getAttribute('content')?.trim();
 
-  // 3. Headings H1, H2, H3
-  const h1Elements = doc ? Array.from(doc.querySelectorAll('h1')).map(el => el.textContent.trim()).filter(Boolean) : [];
-  const rawH1 = h1Elements[0] || fetchResult.html?.match(/^#\s+(.+)$/im)?.[1]?.trim() || '';
+  if (!metaDescTag) {
+    const m = rawHtml.match(/<meta\s+[^>]*name=["']description["'][^>]*content=(["'])([\s\S]*?)\1/i)
+      || rawHtml.match(/<meta\s+[^>]*content=(["'])([\s\S]*?)\1[^>]*name=["']description["']/i)
+      || rawHtml.match(/<meta\s+[^>]*property=["']og:description["'][^>]*content=(["'])([\s\S]*?)\1/i)
+      || rawHtml.match(/<meta\s+[^>]*name=["']twitter:description["'][^>]*content=(["'])([\s\S]*?)\1/i)
+      || rawHtml.match(/^Description:\s*(.+)$/im);
+    if (m) metaDescTag = (m[2] !== undefined ? m[2] : m[1]).trim();
+  }
+  if (metaDescTag) metaDescTag = decodeHtmlEntities(metaDescTag);
+
+  // 3. Headings H1, H2, H3 (DOMParser + Regex fallback)
+  let h1Elements = doc ? Array.from(doc.querySelectorAll('h1')).map(el => el.textContent.trim()).filter(Boolean) : [];
+  if (h1Elements.length === 0) {
+    h1Elements = [...rawHtml.matchAll(/<h1[^>]*>([\s\S]*?)<\/h1>/gi)]
+      .map(m => decodeHtmlEntities(m[1].replace(/<[^>]+>/g, '')))
+      .filter(Boolean);
+  }
+  const rawH1 = h1Elements[0] || rawHtml.match(/^#\s+(.+)$/im)?.[1]?.trim() || '';
   const h1Count = h1Elements.length || (rawH1 ? 1 : 0);
 
-  const h2Elements = doc ? Array.from(doc.querySelectorAll('h2')).map(el => el.textContent.trim()).filter(Boolean) : [];
-  const h3Elements = doc ? Array.from(doc.querySelectorAll('h3')).map(el => el.textContent.trim()).filter(Boolean) : [];
+  let h2Elements = doc ? Array.from(doc.querySelectorAll('h2')).map(el => el.textContent.trim()).filter(Boolean) : [];
+  if (h2Elements.length === 0) {
+    h2Elements = [...rawHtml.matchAll(/<h2[^>]*>([\s\S]*?)<\/h2>/gi)]
+      .map(m => decodeHtmlEntities(m[1].replace(/<[^>]+>/g, '')))
+      .filter(Boolean);
+  }
+
+  let h3Elements = doc ? Array.from(doc.querySelectorAll('h3')).map(el => el.textContent.trim()).filter(Boolean) : [];
+  if (h3Elements.length === 0) {
+    h3Elements = [...rawHtml.matchAll(/<h3[^>]*>([\s\S]*?)<\/h3>/gi)]
+      .map(m => decodeHtmlEntities(m[1].replace(/<[^>]+>/g, '')))
+      .filter(Boolean);
+  }
   const allHeadings = [...h2Elements, ...h3Elements];
 
   // Question Headings (AEO signal: Perplexity & AI Overviews target question-format headings)
   const questionRegex = /^(what|how|why|when|where|who|which|can|is|are|will|should|do|does|could|would)\b|\?$/i;
   const questionHeadings = allHeadings.filter(h => questionRegex.test(h.trim()));
 
-  // 4. Canonical & Robots
-  const canonicalHref = doc?.querySelector('link[rel="canonical"]')?.getAttribute('href')?.trim() || '';
-  const metaRobots = doc?.querySelector('meta[name="robots"]')?.getAttribute('content') || '';
+  // 4. Canonical & Robots (DOMParser + Regex fallback)
+  let canonicalHref = doc?.querySelector('link[rel~="canonical" i]')?.getAttribute('href')?.trim()
+    || doc?.querySelector('link[href][rel~="canonical" i]')?.getAttribute('href')?.trim();
+
+  if (!canonicalHref) {
+    const m = rawHtml.match(/<link\s+[^>]*rel=["']canonical["'][^>]*href=(["'])([\s\S]*?)\1/i)
+      || rawHtml.match(/<link\s+[^>]*href=(["'])([\s\S]*?)\1[^>]*rel=["']canonical["']/i);
+    if (m) canonicalHref = m[2].trim();
+  }
+
+  let metaRobots = doc?.querySelector('meta[name="robots" i]')?.getAttribute('content') || '';
+  if (!metaRobots) {
+    const m = rawHtml.match(/<meta\s+[^>]*name=["']robots["'][^>]*content=(["'])([\s\S]*?)\1/i)
+      || rawHtml.match(/<meta\s+[^>]*content=(["'])([\s\S]*?)\1[^>]*name=["']robots["']/i);
+    if (m) metaRobots = m[2].trim();
+  }
   const isNoFollow = metaRobots.toLowerCase().includes('nofollow');
   const isNoIndex = metaRobots.toLowerCase().includes('noindex');
 
@@ -76,9 +163,11 @@ export function extractPageMetadata(fetchResult, url, depth = 1, hostname = '') 
   }
 
   // 5. Content text, word count, paragraphs
-  const bodyText = doc ? (doc.body?.textContent || '') : (fetchResult.html || '').replace(/!?\[[^\]]*\]\([^)]*\)/g, ' ');
+  const bodyText = doc ? (doc.body?.textContent || '') : rawHtml.replace(/<[^>]+>/g, ' ').replace(/!?\[[^\]]*\]\([^)]*\)/g, ' ');
   const wordCount = (bodyText.match(/[\p{L}\p{N}][\p{L}\p{N}'’-]*/gu) || []).length;
-  const paragraphs = doc ? Array.from(doc.querySelectorAll('main p, article p, p')).map(p => p.textContent.replace(/\s+/g, ' ').trim()).filter(p => p.length > 20) : [];
+  const paragraphs = doc
+    ? Array.from(doc.querySelectorAll('main p, article p, p')).map(p => p.textContent.replace(/\s+/g, ' ').trim()).filter(p => p.length > 20)
+    : [...rawHtml.matchAll(/<p[^>]*>([\s\S]*?)<\/p>/gi)].map(m => m[1].replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim()).filter(p => p.length > 20);
   const paragraphsCount = paragraphs.length;
 
   // Direct answerability (AEO signal: 25-85 words definition/answer in early paragraph)
@@ -101,44 +190,69 @@ export function extractPageMetadata(fetchResult, url, depth = 1, hostname = '') 
     const faqClasses = doc.querySelectorAll('[class*="faq" i], [id*="faq" i], [class*="accordion" i]').length;
     const qMatches = (bodyText.match(/\b(Q:|Question:|Q\d+:)\b/gi) || []).length;
     faqCount = Math.max(detailsCount, faqClasses, qMatches);
+  } else {
+    const detailsCount = (rawHtml.match(/<details\b/gi) || []).length;
+    const faqClasses = (rawHtml.match(/class=["'][^"']*(faq|accordion)[^"']*["']/gi) || []).length;
+    const qMatches = (bodyText.match(/\b(Q:|Question:|Q\d+:)\b/gi) || []).length;
+    faqCount = Math.max(detailsCount, faqClasses, qMatches);
   }
   const hasFaq = faqCount > 0;
 
   // 7. Structured Lists & Tables (AEO/GEO signal)
-  const listsCount = doc ? doc.querySelectorAll('ul, ol').length : 0;
-  const tablesCount = doc ? doc.querySelectorAll('table').length : 0;
+  const listsCount = doc ? doc.querySelectorAll('ul, ol').length : (rawHtml.match(/<(ul|ol)\b/gi) || []).length;
+  const tablesCount = doc ? doc.querySelectorAll('table').length : (rawHtml.match(/<table\b/gi) || []).length;
   const hasLists = listsCount > 0;
   const hasTables = tablesCount > 0;
 
   // 8. Author & E-E-A-T Signals (AEO/GEO trust)
-  const authorName = doc?.querySelector('meta[name="author"]')?.getAttribute('content')?.trim()
-    || doc?.querySelector('[rel="author"]')?.textContent?.trim()
+  let authorName = doc?.querySelector('meta[name="author" i]')?.getAttribute('content')?.trim()
+    || doc?.querySelector('[rel="author" i]')?.textContent?.trim()
     || doc?.querySelector('[class*="author" i]')?.textContent?.trim()?.slice(0, 50)
     || '';
-  const datePublished = doc?.querySelector('meta[property="article:published_time"]')?.getAttribute('content')
+  if (!authorName) {
+    const m = rawHtml.match(/<meta\s+[^>]*name=["']author["'][^>]*content=(["'])([\s\S]*?)\1/i);
+    if (m) authorName = m[2].trim();
+  }
+
+  let datePublished = doc?.querySelector('meta[property="article:published_time" i]')?.getAttribute('content')
     || doc?.querySelector('time')?.getAttribute('datetime')
     || doc?.querySelector('time')?.textContent?.trim()
     || '';
+  if (!datePublished) {
+    const m = rawHtml.match(/<meta\s+[^>]*property=["']article:published_time["'][^>]*content=(["'])([\s\S]*?)\1/i)
+      || rawHtml.match(/<time\s+[^>]*datetime=(["'])([\s\S]*?)\1/i);
+    if (m) datePublished = m[2].trim();
+  }
   const hasAuthor = !!authorName;
   const hasDate = !!datePublished;
 
   // 9. Structured Data (Schema.org JSON-LD - GEO Signal)
   const schemas = [];
+  const extractType = (obj) => {
+    if (!obj) return;
+    if (obj['@type']) {
+      if (Array.isArray(obj['@type'])) schemas.push(...obj['@type']);
+      else schemas.push(obj['@type']);
+    }
+    if (Array.isArray(obj['@graph'])) {
+      obj['@graph'].forEach(extractType);
+    }
+  };
+
   if (doc) {
     const ldScripts = doc.querySelectorAll('script[type="application/ld+json"]');
     ldScripts.forEach(script => {
       try {
         const parsed = JSON.parse(script.textContent || '{}');
-        const extractType = (obj) => {
-          if (!obj) return;
-          if (obj['@type']) {
-            if (Array.isArray(obj['@type'])) schemas.push(...obj['@type']);
-            else schemas.push(obj['@type']);
-          }
-          if (Array.isArray(obj['@graph'])) {
-            obj['@graph'].forEach(extractType);
-          }
-        };
+        extractType(parsed);
+      } catch (e) {}
+    });
+  }
+  if (schemas.length === 0) {
+    const regexScripts = [...rawHtml.matchAll(/<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)];
+    regexScripts.forEach(m => {
+      try {
+        const parsed = JSON.parse(m[1].trim());
         extractType(parsed);
       } catch (e) {}
     });
@@ -202,6 +316,7 @@ export function extractPageMetadata(fetchResult, url, depth = 1, hostname = '') 
     description: metaDescTag || '',
     h1: rawH1,
     h1Count,
+    h1Headings: h1Elements,
     h2Headings: h2Elements,
     h3Headings: h3Elements,
     questionHeadings,
@@ -261,6 +376,7 @@ export function createUnreachedPageObject(url, depth = 1, error = 'Network timeo
     description: '',
     h1: '',
     h1Count: 0,
+    h1Headings: [],
     h2Headings: [],
     h3Headings: [],
     questionHeadings: [],
@@ -563,13 +679,13 @@ export class ClientCrawler {
       return this.preferredProxy;
     }
 
-    // 1. Local Vite dev server proxy (ONLY active on localhost)
+    // 1. Local Vite dev server proxy (active on localhost or preview port)
     if (isLocalEnvironment()) {
       try {
         const probeRes = await this.tryFetchEndpoint(this.devProxyUrl(testUrl), {}, 3000);
         if (probeRes && probeRes.ok) {
           const text = await probeRes.text();
-          if (text && text.length > 20 && !text.includes('{"error":')) {
+          if (isValidHtmlResponse(text, probeRes.status)) {
             this.preferredProxy = { type: 'dev' };
             return this.preferredProxy;
           }
@@ -593,7 +709,7 @@ export class ClientCrawler {
         const probe = await this.tryFetchEndpoint(`https://r.jina.ai/${testUrl}`, JINA_TURBO_HEADERS, 4000);
         if (probe && probe.ok) {
           const text = await probe.text();
-          if (text && text.length > 30 && !text.includes('{"error":') && probe.status !== 429) {
+          if (isValidHtmlResponse(text, probe.status)) {
             this.preferredProxy = { type: 'jina_html' };
             return this.preferredProxy;
           }
@@ -605,7 +721,7 @@ export class ClientCrawler {
         const probe = await this.tryFetchEndpoint(`https://api.allorigins.win/get?url=${encodeURIComponent(testUrl)}`, {}, 4000);
         if (probe && probe.ok) {
           const json = await probe.json();
-          if (json && json.contents && json.contents.length > 30) {
+          if (json && isValidHtmlResponse(json.contents, json.status?.http_code || 200)) {
             this.preferredProxy = { type: 'allorigins' };
             return this.preferredProxy;
           }
@@ -680,7 +796,7 @@ export class ClientCrawler {
         // Treat 200, 301, 404, 403 as valid upstream responses (only 502/504 indicates proxy connection failure)
         if (resp && resp.status !== 502 && resp.status !== 504) {
           const html = await resp.text();
-          if (!html.includes('{"error":') || resp.status < 500) {
+          if (isValidHtmlResponse(html, resp.status)) {
             const latency = Math.round(performance.now() - startTime);
             this.preferredProxy = { type: 'dev' };
             const res = { ok: true, status: resp.status, latency, html, proxyName: 'Dev Server Proxy' };
@@ -712,7 +828,7 @@ export class ClientCrawler {
         const resp = await this.tryFetchEndpoint(jinaUrl, JINA_TURBO_HEADERS, 9000);
         if (resp && resp.ok) {
           const html = await resp.text();
-          if (html && html.length > 50 && !html.includes('{"error":') && !html.includes('AbuseAlleviationError') && resp.status !== 429) {
+          if (isValidHtmlResponse(html, resp.status)) {
             const latency = Math.round(performance.now() - startTime);
             this.preferredProxy = { type: 'jina_html' };
             const res = { ok: true, status: 200, latency, html, proxyName: 'Jina Engine (HTML)' };
@@ -728,7 +844,7 @@ export class ClientCrawler {
         const resp = await this.tryFetchEndpoint(allOriginsUrl, {}, 7000);
         if (resp && resp.ok) {
           const json = await resp.json();
-          if (json && json.contents && json.contents.length > 50) {
+          if (json && isValidHtmlResponse(json.contents, json.status?.http_code || 200)) {
             const latency = Math.round(performance.now() - startTime);
             this.preferredProxy = { type: 'allorigins' };
             const res = { ok: true, status: json.status?.http_code || 200, latency, html: json.contents, proxyName: 'AllOrigins Gateway' };
@@ -744,7 +860,7 @@ export class ClientCrawler {
         const resp = await this.tryFetchEndpoint(jinaUrl, {}, 7000);
         if (resp && resp.ok) {
           const text = await resp.text();
-          if (text && text.length > 50 && !text.includes('{"error":') && !text.includes('AbuseAlleviationError') && resp.status !== 429) {
+          if (isValidHtmlResponse(text, resp.status)) {
             const latency = Math.round(performance.now() - startTime);
             this.preferredProxy = { type: 'jina_md' };
             const res = { ok: true, status: 200, latency, html: text, isMarkdown: true, proxyName: 'Jina Engine (Markdown)' };
@@ -812,7 +928,7 @@ export class ClientCrawler {
       const resp = await this.tryFetchEndpoint(devProxyUrl, {}, 10000);
       if (resp && resp.status !== 502 && resp.status !== 504) {
         const html = await resp.text();
-        if (!html.includes('{"error":') || resp.status < 500) {
+        if (isValidHtmlResponse(html, resp.status)) {
           return { ok: true, status: resp.status, latency: Math.round(performance.now() - startTime), html, proxyName: 'Dev Server Proxy' };
         }
       }
@@ -826,7 +942,7 @@ export class ClientCrawler {
       const resp = await this.tryFetchEndpoint(`https://r.jina.ai/${url}`, JINA_TURBO_HEADERS, 9000);
       if (resp && resp.ok) {
         const html = await resp.text();
-        if (html && html.length > 50 && !html.includes('{"error":') && !html.includes('AbuseAlleviationError') && resp.status !== 429) {
+        if (isValidHtmlResponse(html, resp.status)) {
           return { ok: true, status: 200, latency: Math.round(performance.now() - startTime), html, proxyName: 'Jina Engine (HTML)' };
         }
       }
@@ -834,7 +950,7 @@ export class ClientCrawler {
       const resp = await this.tryFetchEndpoint(`https://api.allorigins.win/get?url=${encodeURIComponent(url)}`, {}, 7000);
       if (resp && resp.ok) {
         const json = await resp.json();
-        if (json && json.contents && json.contents.length > 50) {
+        if (json && isValidHtmlResponse(json.contents, json.status?.http_code || 200)) {
           return { ok: true, status: json.status?.http_code || 200, latency: Math.round(performance.now() - startTime), html: json.contents, proxyName: 'AllOrigins Gateway' };
         }
       }
@@ -842,7 +958,7 @@ export class ClientCrawler {
       const resp = await this.tryFetchEndpoint(`https://r.jina.ai/${url}`, {}, 7000);
       if (resp && resp.ok) {
         const text = await resp.text();
-        if (text && text.length > 50 && !text.includes('{"error":') && !text.includes('AbuseAlleviationError') && resp.status !== 429) {
+        if (isValidHtmlResponse(text, resp.status)) {
           return { ok: true, status: 200, latency: Math.round(performance.now() - startTime), html: text, isMarkdown: true, proxyName: 'Jina Engine (Markdown)' };
         }
       }
@@ -1245,6 +1361,11 @@ export async function fetchSinglePage(url, options = {}) {
     customCorsProxy: options.customCorsProxy || '',
     userAgent: options.userAgent
   });
+
+  try {
+    await crawler.detectBestEngine(url);
+  } catch (e) {}
+
   const fetchResult = await crawler.fetchPageHtml(url);
   if (fetchResult.ok && fetchResult.html) {
     let hostname = '';

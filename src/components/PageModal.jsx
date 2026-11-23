@@ -226,13 +226,24 @@ export default function PageModal({ page, onClose, onUpdatePage, addToast }) {
               <div className="glass-panel" style={{ padding: '0.9rem', boxShadow: 'none' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.3rem' }}>
                   <span className="option-label">H1 Heading</span>
-                  <span className={`badge ${currentPage.h1Count === 1 ? 'badge-200' : 'badge-warn'}`}>
+                  <span className={`badge ${currentPage.h1Count === 1 ? 'badge-200' : currentPage.h1Count > 1 ? 'badge-warn' : 'badge-400'}`}>
                     {currentPage.h1Count || (currentPage.h1 ? 1 : 0)} H1 tag(s)
                   </span>
                 </div>
-                <p style={{ fontSize: '0.88rem', color: currentPage.h1 ? 'var(--text-primary)' : 'var(--accent-red)', margin: 0 }}>
-                  {currentPage.h1 || 'Missing <h1> tag'}
-                </p>
+                {currentPage.h1Headings && currentPage.h1Headings.length > 1 ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', marginTop: '0.2rem' }}>
+                    {currentPage.h1Headings.map((heading, hIdx) => (
+                      <div key={hIdx} style={{ fontSize: '0.86rem', color: 'var(--text-primary)', display: 'flex', alignItems: 'baseline', gap: '0.4rem' }}>
+                        <span className="badge badge-muted" style={{ fontSize: '0.66rem', padding: '0.1rem 0.35rem' }}>H1 #{hIdx + 1}</span>
+                        <span>{heading}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p style={{ fontSize: '0.88rem', color: currentPage.h1 ? 'var(--text-primary)' : 'var(--accent-red)', margin: 0 }}>
+                    {currentPage.h1 || 'Missing <h1> tag'}
+                  </p>
+                )}
               </div>
 
               {/* Canonical URL */}
