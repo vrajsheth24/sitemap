@@ -78,14 +78,14 @@ export default function LiveMetrics({ pages = [], seoAudit, stats }) {
       />
 
       <MetricCard
-        title="SEO health score"
+        title="SEO · AEO · GEO score"
         icon={hasPages && !scoreGood ? ShieldAlert : ShieldCheck}
         iconBg={!hasPages ? 'var(--surface-hover)' : scoreGood ? 'var(--success-soft)' : 'var(--warning-soft)'}
         iconColor={!hasPages ? 'var(--text-muted)' : scoreGood ? 'var(--accent-emerald)' : 'var(--accent-amber)'}
         value={hasPages ? score : '–'}
         unit="/100"
         valueColor={!hasPages ? 'var(--text-muted)' : scoreGood ? 'var(--accent-emerald)' : 'var(--accent-amber)'}
-        subtitle={hasPages ? `${seoAudit?.criticalCount || 0} critical · ${seoAudit?.warningCount || 0} warnings` : 'Audit pending'}
+        subtitle={hasPages ? `SEO ${seoAudit?.seoScore ?? score} · AEO ${seoAudit?.aeoScore ?? score} · GEO ${seoAudit?.geoScore ?? score}` : 'Audit pending'}
       />
 
       <MetricCard

@@ -12,10 +12,306 @@ export function isLocalEnvironment() {
 const JINA_TURBO_HEADERS = {
   'X-Return-Format': 'html',
   'X-Wait-For-Selector': 'none',
-  'X-Timeout': '5',
+  'X-Timeout': '8',
   'X-With-Generated-Alt': 'false',
   'X-No-Cache': 'true'
 };
+
+// ---------------------------------------------------------------------------
+// Comprehensive on-page metadata extractor for SEO, AEO, and GEO signals
+// ---------------------------------------------------------------------------
+export function extractPageMetadata(fetchResult, url, depth = 1, hostname = '') {
+  let doc = null;
+  if (typeof DOMParser !== 'undefined' && !fetchResult.isMarkdown && fetchResult.html) {
+    try {
+      const parser = new DOMParser();
+      doc = parser.parseFromString(fetchResult.html, 'text/html');
+    } catch (e) {
+      doc = null;
+    }
+  }
+
+  // 1. Title
+  const rawTitle = doc?.querySelector('title')?.textContent?.trim()
+    || fetchResult.html?.match(/^Title:\s*(.+)$/im)?.[1]?.trim()
+    || fetchResult.html?.match(/^#\s+(.+)$/im)?.[1]?.trim()
+    || '';
+
+  // 2. Meta description
+  const metaDescTag = doc?.querySelector('meta[name="description"]')?.getAttribute('content')?.trim()
+    || doc?.querySelector('meta[property="og:description"]')?.getAttribute('content')?.trim()
+    || doc?.querySelector('meta[name="twitter:description"]')?.getAttribute('content')?.trim()
+    || fetchResult.html?.match(/^Description:\s*(.+)$/im)?.[1]?.trim();
+
+  // 3. Headings H1, H2, H3
+  const h1Elements = doc ? Array.from(doc.querySelectorAll('h1')).map(el => el.textContent.trim()).filter(Boolean) : [];
+  const rawH1 = h1Elements[0] || fetchResult.html?.match(/^#\s+(.+)$/im)?.[1]?.trim() || '';
+  const h1Count = h1Elements.length || (rawH1 ? 1 : 0);
+
+  const h2Elements = doc ? Array.from(doc.querySelectorAll('h2')).map(el => el.textContent.trim()).filter(Boolean) : [];
+  const h3Elements = doc ? Array.from(doc.querySelectorAll('h3')).map(el => el.textContent.trim()).filter(Boolean) : [];
+  const allHeadings = [...h2Elements, ...h3Elements];
+
+  // Question Headings (AEO signal: Perplexity & AI Overviews target question-format headings)
+  const questionRegex = /^(what|how|why|when|where|who|which|can|is|are|will|should|do|does|could|would)\b|\?$/i;
+  const questionHeadings = allHeadings.filter(h => questionRegex.test(h.trim()));
+
+  // 4. Canonical & Robots
+  const canonicalHref = doc?.querySelector('link[rel="canonical"]')?.getAttribute('href')?.trim() || '';
+  const metaRobots = doc?.querySelector('meta[name="robots"]')?.getAttribute('content') || '';
+  const isNoFollow = metaRobots.toLowerCase().includes('nofollow');
+  const isNoIndex = metaRobots.toLowerCase().includes('noindex');
+
+  // Check if canonical matches current URL
+  let isCanonicalMatching = true;
+  if (canonicalHref) {
+    try {
+      const canonObj = new URL(canonicalHref, url);
+      const urlObj = new URL(url);
+      isCanonicalMatching = canonObj.origin === urlObj.origin &&
+        canonObj.pathname.replace(/\/+$/, '') === urlObj.pathname.replace(/\/+$/, '');
+    } catch (e) {
+      isCanonicalMatching = false;
+    }
+  }
+
+  // 5. Content text, word count, paragraphs
+  const bodyText = doc ? (doc.body?.textContent || '') : (fetchResult.html || '').replace(/!?\[[^\]]*\]\([^)]*\)/g, ' ');
+  const wordCount = (bodyText.match(/[\p{L}\p{N}][\p{L}\p{N}'’-]*/gu) || []).length;
+  const paragraphs = doc ? Array.from(doc.querySelectorAll('main p, article p, p')).map(p => p.textContent.replace(/\s+/g, ' ').trim()).filter(p => p.length > 20) : [];
+  const paragraphsCount = paragraphs.length;
+
+  // Direct answerability (AEO signal: 25-85 words definition/answer in early paragraph)
+  let hasDirectAnswer = false;
+  let directAnswerSample = '';
+  for (let i = 0; i < Math.min(3, paragraphs.length); i++) {
+    const p = paragraphs[i];
+    const words = p.split(/\s+/).length;
+    if (words >= 25 && words <= 85) {
+      hasDirectAnswer = true;
+      directAnswerSample = p.slice(0, 160) + (p.length > 160 ? '...' : '');
+      break;
+    }
+  }
+
+  // 6. FAQ & Q&A Detection (AEO signal)
+  let faqCount = 0;
+  if (doc) {
+    const detailsCount = doc.querySelectorAll('details').length;
+    const faqClasses = doc.querySelectorAll('[class*="faq" i], [id*="faq" i], [class*="accordion" i]').length;
+    const qMatches = (bodyText.match(/\b(Q:|Question:|Q\d+:)\b/gi) || []).length;
+    faqCount = Math.max(detailsCount, faqClasses, qMatches);
+  }
+  const hasFaq = faqCount > 0;
+
+  // 7. Structured Lists & Tables (AEO/GEO signal)
+  const listsCount = doc ? doc.querySelectorAll('ul, ol').length : 0;
+  const tablesCount = doc ? doc.querySelectorAll('table').length : 0;
+  const hasLists = listsCount > 0;
+  const hasTables = tablesCount > 0;
+
+  // 8. Author & E-E-A-T Signals (AEO/GEO trust)
+  const authorName = doc?.querySelector('meta[name="author"]')?.getAttribute('content')?.trim()
+    || doc?.querySelector('[rel="author"]')?.textContent?.trim()
+    || doc?.querySelector('[class*="author" i]')?.textContent?.trim()?.slice(0, 50)
+    || '';
+  const datePublished = doc?.querySelector('meta[property="article:published_time"]')?.getAttribute('content')
+    || doc?.querySelector('time')?.getAttribute('datetime')
+    || doc?.querySelector('time')?.textContent?.trim()
+    || '';
+  const hasAuthor = !!authorName;
+  const hasDate = !!datePublished;
+
+  // 9. Structured Data (Schema.org JSON-LD - GEO Signal)
+  const schemas = [];
+  if (doc) {
+    const ldScripts = doc.querySelectorAll('script[type="application/ld+json"]');
+    ldScripts.forEach(script => {
+      try {
+        const parsed = JSON.parse(script.textContent || '{}');
+        const extractType = (obj) => {
+          if (!obj) return;
+          if (obj['@type']) {
+            if (Array.isArray(obj['@type'])) schemas.push(...obj['@type']);
+            else schemas.push(obj['@type']);
+          }
+          if (Array.isArray(obj['@graph'])) {
+            obj['@graph'].forEach(extractType);
+          }
+        };
+        extractType(parsed);
+      } catch (e) {}
+    });
+  }
+  const uniqueSchemas = Array.from(new Set(schemas));
+  const hasSchema = uniqueSchemas.length > 0;
+  const hasFaqSchema = uniqueSchemas.some(s => /faqpage/i.test(s));
+
+  // 10. Information / Fact Density (GEO Signal: numbers, percentages, data points)
+  const statMatches = bodyText.match(/\b\d+(\.\d+)?%|\$\d+(\.\d+)?|\b(19\d\d|20\d\d)\b|\b\d{2,}(,\d{3})+\b/g) || [];
+  const statDensity = statMatches.length;
+
+  // 11. Images & Alt attributes
+  const rawImages = doc ? Array.from(doc.querySelectorAll('img')) : [];
+  const images = [];
+  const imagesWithoutAlt = [];
+  rawImages.forEach(img => {
+    const src = img.getAttribute('src') || img.getAttribute('data-src');
+    if (!src || src.startsWith('data:') || src.startsWith('blob:')) return;
+    try {
+      const abs = new URL(src, url).href;
+      if (!images.includes(abs) && images.length < 30) images.push(abs);
+      const alt = img.getAttribute('alt');
+      if (alt === null || alt.trim() === '') {
+        if (!imagesWithoutAlt.includes(abs) && imagesWithoutAlt.length < 20) {
+          imagesWithoutAlt.push(abs);
+        }
+      }
+    } catch (e) {}
+  });
+
+  // 12. External links for citations (GEO Signal)
+  const externalLinks = [];
+  if (doc) {
+    try {
+      const currentHost = new URL(url).hostname;
+      doc.querySelectorAll('a[href^="http"]').forEach(a => {
+        try {
+          const href = a.getAttribute('href');
+          const extHost = new URL(href).hostname;
+          if (extHost && extHost !== currentHost && !extHost.endsWith('.' + currentHost)) {
+            if (!externalLinks.includes(href) && externalLinks.length < 20) {
+              externalLinks.push(href);
+            }
+          }
+        } catch (e) {}
+      });
+    } catch (e) {}
+  }
+
+  // 13. Mobile & OpenGraph
+  const hasViewport = !!doc?.querySelector('meta[name="viewport"]');
+  const ogTitle = doc?.querySelector('meta[property="og:title"]')?.getAttribute('content')?.trim() || '';
+  const ogDescription = doc?.querySelector('meta[property="og:description"]')?.getAttribute('content')?.trim() || '';
+  const ogImage = doc?.querySelector('meta[property="og:image"]')?.getAttribute('content')?.trim() || '';
+  const twitterCard = doc?.querySelector('meta[name="twitter:card"]')?.getAttribute('content')?.trim() || '';
+
+  return {
+    url,
+    title: rawTitle,
+    description: metaDescTag || '',
+    h1: rawH1,
+    h1Count,
+    h2Headings: h2Elements,
+    h3Headings: h3Elements,
+    questionHeadings,
+    canonicalHref,
+    hasCanonical: !!canonicalHref,
+    isCanonicalMatching,
+    metaRobots,
+    isNoIndex,
+    isNoFollow,
+    hasViewport,
+    imagesCount: images.length,
+    images,
+    missingAltCount: imagesWithoutAlt.length,
+    imagesWithoutAlt,
+    wordCount,
+    paragraphsCount,
+    hasDirectAnswer,
+    directAnswerSample,
+    hasFaq: hasFaq || hasFaqSchema,
+    faqCount,
+    hasLists,
+    listsCount,
+    hasTables,
+    tablesCount,
+    hasAuthor,
+    authorName,
+    hasDate,
+    datePublished,
+    schemas: uniqueSchemas,
+    hasSchema,
+    hasFaqSchema,
+    statDensity,
+    externalLinks,
+    externalLinksCount: externalLinks.length,
+    ogTitle,
+    ogDescription,
+    ogImage,
+    twitterCard,
+    statusCode: fetchResult.status || 200,
+    loadTime: fetchResult.latency || 100,
+    sizeKb: Math.round((fetchResult.html?.length || 0) / 1024) || 1,
+    depth,
+    links: [],
+    fetchFailed: false,
+    fetchError: null,
+    isIndexable: !isNoIndex,
+    lastmod: new Date().toISOString().split('T')[0],
+    changefreq: depth === 0 ? 'daily' : depth === 1 ? 'weekly' : 'monthly',
+    priority: Math.max(0.2, parseFloat((1.0 - depth * 0.12).toFixed(1)))
+  };
+}
+
+export function createUnreachedPageObject(url, depth = 1, error = 'Network timeout / CORS restriction', latency = 0) {
+  return {
+    url,
+    title: '',
+    description: '',
+    h1: '',
+    h1Count: 0,
+    h2Headings: [],
+    h3Headings: [],
+    questionHeadings: [],
+    canonicalHref: '',
+    hasCanonical: false,
+    isCanonicalMatching: false,
+    metaRobots: '',
+    isNoIndex: false,
+    isNoFollow: false,
+    hasViewport: false,
+    imagesCount: 0,
+    images: [],
+    missingAltCount: 0,
+    imagesWithoutAlt: [],
+    wordCount: 0,
+    paragraphsCount: 0,
+    hasDirectAnswer: false,
+    directAnswerSample: '',
+    hasFaq: false,
+    faqCount: 0,
+    hasLists: false,
+    listsCount: 0,
+    hasTables: false,
+    tablesCount: 0,
+    hasAuthor: false,
+    authorName: '',
+    hasDate: false,
+    datePublished: '',
+    schemas: [],
+    hasSchema: false,
+    hasFaqSchema: false,
+    statDensity: 0,
+    externalLinks: [],
+    externalLinksCount: 0,
+    ogTitle: '',
+    ogDescription: '',
+    ogImage: '',
+    twitterCard: '',
+    statusCode: 0,
+    loadTime: latency || 0,
+    sizeKb: 0,
+    depth,
+    links: [],
+    fetchFailed: true,
+    fetchError: error,
+    isIndexable: true,
+    lastmod: new Date().toISOString().split('T')[0],
+    changefreq: depth === 0 ? 'daily' : depth === 1 ? 'weekly' : 'monthly',
+    priority: Math.max(0.2, parseFloat((1.0 - depth * 0.12).toFixed(1)))
+  };
+}
 
 export class ClientCrawler {
   constructor(options = {}) {
@@ -224,7 +520,7 @@ export class ClientCrawler {
     }
   }
 
-  // Upfront 300ms pre-flight probe: detects fastest working engine once at start
+  // Upfront pre-flight probe: detects fastest working engine once at start
   async detectBestEngine(testUrl) {
     if (this.preferredProxy) return this.preferredProxy;
 
@@ -237,7 +533,7 @@ export class ClientCrawler {
     // 1. Local Vite dev server proxy (ONLY active on localhost)
     if (isLocalEnvironment()) {
       try {
-        const probeRes = await this.tryFetchEndpoint(this.devProxyUrl(testUrl), {}, 1000);
+        const probeRes = await this.tryFetchEndpoint(this.devProxyUrl(testUrl), {}, 3000);
         if (probeRes && probeRes.ok) {
           const text = await probeRes.text();
           if (text && text.length > 20 && !text.includes('{"error":')) {
@@ -250,30 +546,18 @@ export class ClientCrawler {
 
     // 2. Direct fetch (works if target site sets Access-Control-Allow-Origin: *)
     try {
-      const dirRes = await this.tryFetchEndpoint(testUrl, {}, 800);
+      const dirRes = await this.tryFetchEndpoint(testUrl, {}, 1200);
       if (dirRes && dirRes.ok) {
         this.preferredProxy = { type: 'direct' };
         return this.preferredProxy;
       }
     } catch (e) {}
 
-    // 3. Probe CORS Proxy Fleet (cors.lol, Jina HTML, Jina MD)
+    // 3. Probe CORS Proxy Fleet (Jina HTML, AllOrigins, Jina MD)
     if (this.useCorsProxy) {
-      // Probe fast HTML proxy (api.cors.lol)
+      // Probe Jina HTML (fastest and cleanest DOM proxy)
       try {
-        const probe = await this.tryFetchEndpoint(`https://api.cors.lol/?url=${encodeURIComponent(testUrl)}`, {}, 2000);
-        if (probe && probe.ok) {
-          const text = await probe.text();
-          if (text && text.length > 30 && !text.includes('{"error":') && probe.status !== 429) {
-            this.preferredProxy = { type: 'cors_lol' };
-            return this.preferredProxy;
-          }
-        }
-      } catch (e) {}
-
-      // Probe Jina HTML
-      try {
-        const probe = await this.tryFetchEndpoint(`https://r.jina.ai/${testUrl}`, JINA_TURBO_HEADERS, 2500);
+        const probe = await this.tryFetchEndpoint(`https://r.jina.ai/${testUrl}`, JINA_TURBO_HEADERS, 4000);
         if (probe && probe.ok) {
           const text = await probe.text();
           if (text && text.length > 30 && !text.includes('{"error":') && probe.status !== 429) {
@@ -283,8 +567,20 @@ export class ClientCrawler {
         }
       } catch (e) {}
 
-      // Default fallback: Jina Markdown
-      this.preferredProxy = { type: 'jina_md' };
+      // Probe AllOrigins JSON Gateway
+      try {
+        const probe = await this.tryFetchEndpoint(`https://api.allorigins.win/get?url=${encodeURIComponent(testUrl)}`, {}, 4000);
+        if (probe && probe.ok) {
+          const json = await probe.json();
+          if (json && json.contents && json.contents.length > 30) {
+            this.preferredProxy = { type: 'allorigins' };
+            return this.preferredProxy;
+          }
+        }
+      } catch (e) {}
+
+      // Default fallback: Jina HTML
+      this.preferredProxy = { type: 'jina_html' };
       return this.preferredProxy;
     }
 
@@ -292,7 +588,7 @@ export class ClientCrawler {
   }
 
   // Universal multi-tier fetch pipeline:
-  // Session Cache -> Preferred Proxy -> Custom User Proxy -> Dev Proxy (localhost only) -> Direct Fetch -> Fast CORS Engine -> Turbo Jina Reader HTML -> Turbo Jina Reader MD
+  // Session Cache -> Preferred Proxy -> Custom User Proxy -> Dev Proxy (localhost only) -> Direct Fetch -> Jina HTML -> AllOrigins -> Jina MD
   async fetchPageHtml(url) {
     if (this.cache.has(url)) {
       return this.cache.get(url);
@@ -308,7 +604,7 @@ export class ClientCrawler {
           this.cache.set(url, cachedRes);
           return cachedRes;
         } else {
-          // If the preferred proxy fails or returns 429, invalidate it so we fail over
+          // If preferred proxy failed, invalidate and cascade through options
           this.preferredProxy = null;
         }
       } catch (e) {
@@ -322,7 +618,7 @@ export class ClientCrawler {
         const customUrl = this.customCorsProxy.includes('${url}')
           ? this.customCorsProxy.replace('${url}', encodeURIComponent(url))
           : `${this.customCorsProxy}${encodeURIComponent(url)}`;
-        const resp = await this.tryFetchEndpoint(customUrl, {}, 5000);
+        const resp = await this.tryFetchEndpoint(customUrl, {}, 8000);
         if (resp && resp.ok) {
           const html = await resp.text();
           if (html && html.length > 30) {
@@ -340,7 +636,7 @@ export class ClientCrawler {
     if (isLocalEnvironment()) {
       try {
         const devProxyUrl = this.devProxyUrl(url);
-        const resp = await this.tryFetchEndpoint(devProxyUrl, {}, 2500);
+        const resp = await this.tryFetchEndpoint(devProxyUrl, {}, 8000);
         if (resp && resp.ok) {
           const html = await resp.text();
           if (html && html.length > 20 && !html.includes('{"error":')) {
@@ -356,7 +652,7 @@ export class ClientCrawler {
 
     // 3. Direct fetch (works if target site enables CORS headers or same-origin)
     try {
-      const resp = await this.tryFetchEndpoint(url, {}, 1000);
+      const resp = await this.tryFetchEndpoint(url, {}, 1500);
       if (resp && resp.ok) {
         const html = await resp.text();
         const latency = Math.round(performance.now() - startTime);
@@ -369,48 +665,48 @@ export class ClientCrawler {
 
     // 4. Public CORS Proxy Fleet (when CORS proxy fallback is enabled)
     if (this.useCorsProxy) {
-      // Tier A: Fast HTML Proxy (cors.lol)
-      try {
-        const lolUrl = `https://api.cors.lol/?url=${encodeURIComponent(url)}`;
-        const resp = await this.tryFetchEndpoint(lolUrl, {}, 2000);
-        if (resp && resp.ok) {
-          const html = await resp.text();
-          if (html && html.length > 30 && !html.includes('{"error":') && resp.status !== 429) {
-            const latency = Math.round(performance.now() - startTime);
-            this.preferredProxy = { type: 'cors_lol' };
-            const res = { ok: true, status: 200, latency, html, proxyName: 'CORS Engine (Fast)' };
-            this.cache.set(url, res);
-            return res;
-          }
-        }
-      } catch (e) {}
-
-      // Tier B: Turbo Jina Reader HTML mode
+      // Tier A: Jina Reader Turbo HTML mode
       try {
         const jinaUrl = `https://r.jina.ai/${url}`;
-        const resp = await this.tryFetchEndpoint(jinaUrl, JINA_TURBO_HEADERS, 2500);
+        const resp = await this.tryFetchEndpoint(jinaUrl, JINA_TURBO_HEADERS, 8000);
         if (resp && resp.ok) {
           const html = await resp.text();
           if (html && html.length > 50 && !html.includes('{"error":') && !html.includes('AbuseAlleviationError') && resp.status !== 429) {
             const latency = Math.round(performance.now() - startTime);
             this.preferredProxy = { type: 'jina_html' };
-            const res = { ok: true, status: 200, latency, html, proxyName: 'Turbo Engine (HTML)' };
+            const res = { ok: true, status: 200, latency, html, proxyName: 'Jina Engine (HTML)' };
             this.cache.set(url, res);
             return res;
           }
         }
       } catch (e) {}
 
-      // Tier C: Turbo Jina Reader Standard Markdown mode
+      // Tier B: AllOrigins JSON Gateway
+      try {
+        const allOriginsUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`;
+        const resp = await this.tryFetchEndpoint(allOriginsUrl, {}, 7000);
+        if (resp && resp.ok) {
+          const json = await resp.json();
+          if (json && json.contents && json.contents.length > 50) {
+            const latency = Math.round(performance.now() - startTime);
+            this.preferredProxy = { type: 'allorigins' };
+            const res = { ok: true, status: json.status?.http_code || 200, latency, html: json.contents, proxyName: 'AllOrigins Gateway' };
+            this.cache.set(url, res);
+            return res;
+          }
+        }
+      } catch (e) {}
+
+      // Tier C: Jina Reader Markdown mode
       try {
         const jinaUrl = `https://r.jina.ai/${url}`;
-        const resp = await this.tryFetchEndpoint(jinaUrl, {}, 2500);
+        const resp = await this.tryFetchEndpoint(jinaUrl, {}, 7000);
         if (resp && resp.ok) {
           const text = await resp.text();
           if (text && text.length > 50 && !text.includes('{"error":') && !text.includes('AbuseAlleviationError') && resp.status !== 429) {
             const latency = Math.round(performance.now() - startTime);
             this.preferredProxy = { type: 'jina_md' };
-            const res = { ok: true, status: 200, latency, html: text, isMarkdown: true, proxyName: 'Turbo Engine (Markdown)' };
+            const res = { ok: true, status: 200, latency, html: text, isMarkdown: true, proxyName: 'Jina Engine (Markdown)' };
             this.cache.set(url, res);
             return res;
           }
@@ -423,6 +719,7 @@ export class ClientCrawler {
       status: 0, 
       latency: Math.round(performance.now() - startTime), 
       html: '', 
+      error: 'Connection timed out or blocked by CORS / bot firewall',
       proxyName: 'Unreachable' 
     };
   }
@@ -433,7 +730,7 @@ export class ClientCrawler {
       const customUrl = pref.urlTemplate.includes('${url}')
         ? pref.urlTemplate.replace('${url}', encodeURIComponent(url))
         : `${pref.urlTemplate}${encodeURIComponent(url)}`;
-      const resp = await this.tryFetchEndpoint(customUrl, {}, 5000);
+      const resp = await this.tryFetchEndpoint(customUrl, {}, 8000);
       if (resp && resp.ok) {
         const html = await resp.text();
         if (html && html.length > 30) {
@@ -442,7 +739,7 @@ export class ClientCrawler {
       }
     } else if (pref.type === 'dev') {
       const devProxyUrl = this.devProxyUrl(url);
-      const resp = await this.tryFetchEndpoint(devProxyUrl, {}, 2500);
+      const resp = await this.tryFetchEndpoint(devProxyUrl, {}, 8000);
       if (resp && resp.ok) {
         const html = await resp.text();
         if (html && html.length > 20 && !html.includes('{"error":')) {
@@ -450,33 +747,33 @@ export class ClientCrawler {
         }
       }
     } else if (pref.type === 'direct') {
-      const resp = await this.tryFetchEndpoint(url, {}, 1000);
+      const resp = await this.tryFetchEndpoint(url, {}, 1500);
       if (resp && resp.ok) {
         const html = await resp.text();
         return { ok: true, status: resp.status, latency: Math.round(performance.now() - startTime), html, proxyName: 'Direct Connection' };
       }
-    } else if (pref.type === 'cors_lol') {
-      const resp = await this.tryFetchEndpoint(`https://api.cors.lol/?url=${encodeURIComponent(url)}`, {}, 3000);
-      if (resp && resp.ok) {
-        const html = await resp.text();
-        if (html && html.length > 30 && !html.includes('{"error":') && resp.status !== 429) {
-          return { ok: true, status: 200, latency: Math.round(performance.now() - startTime), html, proxyName: 'CORS Engine (Fast)' };
-        }
-      }
     } else if (pref.type === 'jina_html') {
-      const resp = await this.tryFetchEndpoint(`https://r.jina.ai/${url}`, JINA_TURBO_HEADERS, 4000);
+      const resp = await this.tryFetchEndpoint(`https://r.jina.ai/${url}`, JINA_TURBO_HEADERS, 8000);
       if (resp && resp.ok) {
         const html = await resp.text();
         if (html && html.length > 50 && !html.includes('{"error":') && !html.includes('AbuseAlleviationError') && resp.status !== 429) {
-          return { ok: true, status: 200, latency: Math.round(performance.now() - startTime), html, proxyName: 'Turbo Engine (HTML)' };
+          return { ok: true, status: 200, latency: Math.round(performance.now() - startTime), html, proxyName: 'Jina Engine (HTML)' };
+        }
+      }
+    } else if (pref.type === 'allorigins') {
+      const resp = await this.tryFetchEndpoint(`https://api.allorigins.win/get?url=${encodeURIComponent(url)}`, {}, 7000);
+      if (resp && resp.ok) {
+        const json = await resp.json();
+        if (json && json.contents && json.contents.length > 50) {
+          return { ok: true, status: json.status?.http_code || 200, latency: Math.round(performance.now() - startTime), html: json.contents, proxyName: 'AllOrigins Gateway' };
         }
       }
     } else if (pref.type === 'jina_md') {
-      const resp = await this.tryFetchEndpoint(`https://r.jina.ai/${url}`, {}, 4000);
+      const resp = await this.tryFetchEndpoint(`https://r.jina.ai/${url}`, {}, 7000);
       if (resp && resp.ok) {
         const text = await resp.text();
         if (text && text.length > 50 && !text.includes('{"error":') && !text.includes('AbuseAlleviationError') && resp.status !== 429) {
-          return { ok: true, status: 200, latency: Math.round(performance.now() - startTime), html: text, isMarkdown: true, proxyName: 'Turbo Engine (Markdown)' };
+          return { ok: true, status: 200, latency: Math.round(performance.now() - startTime), html: text, isMarkdown: true, proxyName: 'Jina Engine (Markdown)' };
         }
       }
     }
@@ -498,15 +795,54 @@ export class ClientCrawler {
     return {
       url,
       title: depth === 0 ? `${this.hostname} - Homepage` : `${inferredTitle} | ${this.hostname}`,
-      description: `Webpage resource for ${url}`,
-      h1: depth === 0 ? `Welcome to ${this.hostname}` : inferredTitle,
+      description: '',
+      h1: inferredTitle,
+      h1Count: 1,
+      h2Headings: [],
+      h3Headings: [],
+      questionHeadings: [],
+      canonicalHref: url,
+      hasCanonical: true,
+      isCanonicalMatching: true,
+      metaRobots: '',
+      isNoIndex: false,
+      isNoFollow: false,
+      hasViewport: true,
       statusCode: 200,
-      loadTime: Math.floor(Math.random() * 60) + 80,
-      sizeKb: Math.floor(Math.random() * 30) + 15,
+      loadTime: 120,
+      sizeKb: 25,
       depth,
       imagesCount: 0,
       images: [],
-      hasCanonical: true,
+      missingAltCount: 0,
+      imagesWithoutAlt: [],
+      wordCount: 350,
+      paragraphsCount: 3,
+      hasDirectAnswer: false,
+      directAnswerSample: '',
+      hasFaq: false,
+      faqCount: 0,
+      hasLists: false,
+      listsCount: 0,
+      hasTables: false,
+      tablesCount: 0,
+      hasAuthor: false,
+      authorName: '',
+      hasDate: false,
+      datePublished: '',
+      schemas: [],
+      hasSchema: false,
+      hasFaqSchema: false,
+      statDensity: 0,
+      externalLinks: [],
+      externalLinksCount: 0,
+      ogTitle: '',
+      ogDescription: '',
+      ogImage: '',
+      twitterCard: '',
+      links: [],
+      fetchFailed: false,
+      fetchError: null,
       isIndexable: true,
       lastmod: new Date().toISOString().split('T')[0],
       changefreq: depth === 0 ? 'daily' : depth === 1 ? 'weekly' : 'monthly',
@@ -618,107 +954,44 @@ export class ClientCrawler {
 
       if (fetchResult.ok && fetchResult.html) {
         try {
-          let doc = null;
-          if (typeof DOMParser !== 'undefined' && !fetchResult.isMarkdown) {
-            try {
-              const parser = new DOMParser();
-              doc = parser.parseFromString(fetchResult.html, 'text/html');
-            } catch (e) {
-              doc = null;
-            }
-          }
+          pageData = extractPageMetadata(fetchResult, item.url, item.depth, this.hostname);
 
-          // HTML Metadata extraction
-          const rawTitle = doc?.querySelector('title')?.textContent?.trim()
-            || fetchResult.html.match(/^Title:\s*(.+)$/im)?.[1]?.trim()
-            || fetchResult.html.match(/^#\s+(.+)$/im)?.[1]?.trim();
-
-          const firstPara = doc?.querySelector('main p, article p, p')?.textContent?.replace(/\s+/g, ' ')?.trim()?.slice(0, 160)
-            || fetchResult.html.match(/URL Source:.*?\n\n(?:Markdown Content:\n\n)?(.{20,160})/is)?.[1]?.replace(/\s+/g, ' ')?.trim();
-
-          const rawDesc = doc?.querySelector('meta[name="description"]')?.getAttribute('content')?.trim() 
-            || doc?.querySelector('meta[property="og:description"]')?.getAttribute('content')?.trim()
-            || doc?.querySelector('meta[name="twitter:description"]')?.getAttribute('content')?.trim()
-            || fetchResult.html.match(/^Description:\s*(.+)$/im)?.[1]?.trim()
-            || firstPara;
-
-          const rawH1 = doc?.querySelector('h1')?.textContent?.trim()
-            || fetchResult.html.match(/^#\s+(.+)$/im)?.[1]?.trim();
-
-          const canonicalHref = doc?.querySelector('link[rel="canonical"]')?.getAttribute('href');
-          const metaRobots = doc?.querySelector('meta[name="robots"]')?.getAttribute('content') || '';
-          const isNoFollow = metaRobots.toLowerCase().includes('nofollow');
-          const isNoIndex = metaRobots.toLowerCase().includes('noindex');
-
-          if (this.filterNoindex && isNoIndex) {
+          if (this.filterNoindex && pageData.isNoIndex) {
             recordSkipped(item.url, 'Robots NoIndex directive');
             return;
           }
-
-          const bodyText = doc ? (doc.body?.textContent || '') : fetchResult.html.replace(/!?\[[^\]]*\]\([^)]*\)/g, ' ');
-          const wordCount = (bodyText.match(/[\p{L}\p{N}][\p{L}\p{N}'’-]*/gu) || []).length;
-
-          // Collect real, absolute image URLs for the <image:image> sitemap extension
-          const rawImageSrcs = doc
-            ? [...doc.querySelectorAll('img')].map(img => img.getAttribute('src') || img.getAttribute('data-src'))
-            : [...fetchResult.html.matchAll(/!\[.*?\]\((https?:\/\/[^\s\)\'\"]+)\)/g)].map(m => m[1]);
-          const images = [];
-          for (const src of rawImageSrcs) {
-            if (!src || src.startsWith('data:') || src.startsWith('blob:')) continue;
-            const abs = this.normalizeUrl(src.trim(), item.url);
-            if (abs && !images.includes(abs)) images.push(abs);
-            if (images.length >= 20) break;
-          }
-
-          pageData = {
-            url: item.url,
-            title: rawTitle || (item.depth === 0 ? `${this.hostname} - Homepage` : this.createPageObject(item.url, item.depth).title),
-            description: rawDesc || (item.depth === 0 ? `Official web portal for ${this.hostname} with complete directory navigation.` : `Webpage resource for ${item.url}`),
-            h1: rawH1 || (item.depth === 0 ? `Welcome to ${this.hostname}` : rawTitle || 'Overview'),
-            statusCode: fetchResult.status || 200,
-            loadTime: fetchResult.latency || Math.floor(Math.random() * 40) + 60,
-            sizeKb: Math.round(fetchResult.html.length / 1024) || Math.floor(Math.random() * 30) + 15,
-            depth: item.depth,
-            imagesCount: images.length,
-            images,
-            wordCount,
-            links: [],
-            hasCanonical: !!canonicalHref,
-            isIndexable: !isNoIndex,
-            lastmod: new Date().toISOString().split('T')[0],
-            changefreq: item.depth === 0 ? 'daily' : item.depth === 1 ? 'weekly' : 'monthly',
-            priority: Math.max(0.2, parseFloat((1.0 - item.depth * 0.12).toFixed(1)))
-          };
 
           if (item.depth === 0 && fetchResult.proxyName) {
             this.onLog(`Connected to ${this.hostname} via ${fetchResult.proxyName} (${fetchResult.latency}ms)`, 'info');
           }
 
           // Extract internal links: always recorded for the link graph, only enqueued within depth limits
-          if (!isNoFollow) {
+          if (!pageData.isNoFollow) {
             const canEnqueue = item.depth < this.maxDepth;
             const rawLinks = [];
 
-            if (doc) {
-              doc.querySelectorAll('a[href]').forEach(a => {
-                const href = a.getAttribute('href');
-                if (href) rawLinks.push(href);
-              });
+            if (typeof DOMParser !== 'undefined' && !fetchResult.isMarkdown) {
+              try {
+                const doc = new DOMParser().parseFromString(fetchResult.html, 'text/html');
+                doc.querySelectorAll('a[href]').forEach(a => {
+                  const href = a.getAttribute('href');
+                  if (href) rawLinks.push(href);
+                });
+              } catch (e) {}
             }
-            // Robust regex fallback if DOMParser is unavailable or missed links
+
+            // Regex fallback if DOMParser missed links or markdown
             if (rawLinks.length === 0 && fetchResult.html) {
               const htmlHrefMatches = [...fetchResult.html.matchAll(/<a\s+[^>]*href=["']([^"'#][^"']*)["']/gi)];
               for (const m of htmlHrefMatches) {
                 rawLinks.push(m[1]);
               }
-            }
-
-            // Also parse Markdown links: [text](url)
-            const mdMatches = [...fetchResult.html.matchAll(/\[(?:[^\]]*)\]\(([^)\s"']+)(?:\s+["'][^"']*["'])?\)/gi)];
-            for (const m of mdMatches) {
-              const urlCandidate = m[1]?.trim();
-              if (urlCandidate && !urlCandidate.startsWith('data:') && !urlCandidate.startsWith('blob:')) {
-                rawLinks.push(urlCandidate);
+              const mdMatches = [...fetchResult.html.matchAll(/\[(?:[^\]]*)\]\(([^)\s"']+)(?:\s+["'][^"']*["'])?\)/gi)];
+              for (const m of mdMatches) {
+                const urlCandidate = m[1]?.trim();
+                if (urlCandidate && !urlCandidate.startsWith('data:') && !urlCandidate.startsWith('blob:')) {
+                  rawLinks.push(urlCandidate);
+                }
               }
             }
 
@@ -737,7 +1010,7 @@ export class ClientCrawler {
                 continue;
               }
 
-              // Record the internal link graph (for orphan / inlink analysis)
+              // Record internal link graph
               if (norm !== item.url && !pageData.links.includes(norm) && pageData.links.length < 500) {
                 pageData.links.push(norm);
               }
@@ -768,16 +1041,13 @@ export class ClientCrawler {
             }
           }
         } catch (err) {
-          pageData = this.createPageObject(item.url, item.depth);
+          pageData = createUnreachedPageObject(item.url, item.depth, err.message, fetchResult.latency);
         }
       } else {
-        pageData = this.createPageObject(item.url, item.depth);
-        pageData.statusCode = fetchResult.status || 0;
-        pageData.loadTime = fetchResult.latency || 0;
-        pageData.fetchFailed = true;
+        pageData = createUnreachedPageObject(item.url, item.depth, fetchResult.error || 'Connection timed out or blocked by CORS', fetchResult.latency);
 
         if (item.depth === 0) {
-          this.onLog(`Could not connect to ${item.url} via direct fetch or CORS proxies. Target server might block cross-origin requests.`, 'error');
+          this.onLog(`Could not connect to ${item.url} via dev proxy or CORS gateways. Target server might block cross-origin requests.`, 'error');
         }
       }
 
@@ -874,4 +1144,25 @@ export class ClientCrawler {
     discoveredPages.skippedPages = skippedList;
     this.onComplete(discoveredPages, stats);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Standalone single-page live audit fetcher
+// ---------------------------------------------------------------------------
+export async function fetchSinglePage(url, options = {}) {
+  const crawler = new ClientCrawler({
+    url,
+    maxPages: 1,
+    maxDepth: 0,
+    useCorsProxy: options.useCorsProxy !== false,
+    customCorsProxy: options.customCorsProxy || '',
+    userAgent: options.userAgent
+  });
+  const fetchResult = await crawler.fetchPageHtml(url);
+  if (fetchResult.ok && fetchResult.html) {
+    let hostname = '';
+    try { hostname = new URL(url).hostname; } catch (e) {}
+    return extractPageMetadata(fetchResult, url, options.depth || 0, hostname);
+  }
+  return createUnreachedPageObject(url, options.depth || 0, fetchResult.error || 'Could not fetch page content cross-origin', fetchResult.latency);
 }

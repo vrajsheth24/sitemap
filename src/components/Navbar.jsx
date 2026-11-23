@@ -25,7 +25,7 @@ export default function Navbar({
   const navItems = [
     { id: 'generator', label: 'URLs & Table', icon: Compass, badge: pagesCount },
     { id: 'tree', label: 'Visual Tree', icon: FolderTree },
-    { id: 'seo', label: 'SEO Health', icon: ShieldCheck, badge: pagesCount > 0 ? seoScore : '–' },
+    { id: 'seo', label: 'SEO, AEO & GEO', icon: ShieldCheck, badge: pagesCount > 0 ? seoScore : '–' },
     { id: 'tools', label: 'SEO Tools', icon: Wrench },
     { id: 'schema', label: 'Schema Generator', icon: Braces },
     { id: 'robots', label: 'robots.txt Generator', icon: FileCog },

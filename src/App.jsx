@@ -390,6 +390,8 @@ export default function App() {
             seoAudit={seoAudit}
             onInspectUrl={setInspectedPage}
             pages={pages}
+            onUpdatePage={handleUpdatePage}
+            addToast={addToast}
           />
         )}
 
@@ -441,6 +443,8 @@ export default function App() {
         <PageModal
           page={inspectedPage}
           onClose={() => setInspectedPage(null)}
+          onUpdatePage={handleUpdatePage}
+          addToast={addToast}
         />
       )}
 
