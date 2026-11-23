@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   AlertTriangle,
   XCircle,
@@ -15,7 +15,13 @@ import {
   HelpCircle,
   Layers,
   ArrowRight,
-  BookOpen
+  BookOpen,
+  ChevronDown,
+  ChevronUp,
+  Copy,
+  Check,
+  X,
+  ListFilter
 } from 'lucide-react';
 import { fetchSinglePage } from '../../utils/clientCrawler';
 
@@ -110,6 +116,9 @@ export default function SeoAuditTab({
   const [selectedPillar, setSelectedPillar] = useState('all'); // 'all' | 'seo' | 'aeo' | 'geo'
   const [selectedSeverity, setSelectedSeverity] = useState('all'); // 'all' | 'critical' | 'warning' | 'info'
   const [searchTerm, setSearchTerm] = useState('');
+  const [viewMode, setViewMode] = useState('grouped'); // 'grouped' | 'list'
+  const [expandedGroups, setExpandedGroups] = useState({});
+  const [copiedGroupKey, setCopiedGroupKey] = useState(null);
   const [visibleIssues, setVisibleIssues] = useState(ISSUE_PAGE_SIZE);
   const [showGuide, setShowGuide] = useState(false);
   const [isAuditingLive, setIsAuditingLive] = useState(false);
@@ -211,18 +220,92 @@ export default function SeoAuditTab({
   }
 
   // Filter issues based on user selection
-  const filteredIssues = issues.filter(issue => {
-    if (selectedPillar !== 'all' && issue.pillar !== selectedPillar) return false;
-    if (selectedSeverity !== 'all' && issue.type !== selectedSeverity) return false;
-    if (searchTerm.trim()) {
-      const q = searchTerm.toLowerCase();
-      const matchUrl = issue.url?.toLowerCase().includes(q);
-      const matchMsg = issue.message?.toLowerCase().includes(q);
-      const matchCat = issue.category?.toLowerCase().includes(q);
-      if (!matchUrl && !matchMsg && !matchCat) return false;
+  const filteredIssues = useMemo(() => {
+    return issues.filter(issue => {
+      if (selectedPillar !== 'all' && issue.pillar !== selectedPillar) return false;
+      if (selectedSeverity !== 'all' && issue.type !== selectedSeverity) return false;
+      if (searchTerm.trim()) {
+        const q = searchTerm.toLowerCase();
+        const matchUrl = issue.url?.toLowerCase().includes(q);
+        const matchMsg = issue.message?.toLowerCase().includes(q);
+        const matchCat = issue.category?.toLowerCase().includes(q);
+        if (!matchUrl && !matchMsg && !matchCat) return false;
+      }
+      return true;
+    });
+  }, [issues, selectedPillar, selectedSeverity, searchTerm]);
+
+  // Group filtered issues by type + category + message for actionable site-wide overview
+  const groupedIssues = useMemo(() => {
+    const groupsMap = new Map();
+    filteredIssues.forEach(issue => {
+      const key = `${issue.pillar}::${issue.type}::${issue.category}::${issue.message}`;
+      if (!groupsMap.has(key)) {
+        groupsMap.set(key, {
+          key,
+          pillar: issue.pillar,
+          type: issue.type,
+          category: issue.category,
+          message: issue.message,
+          recommendation: issue.recommendation,
+          urls: []
+        });
+      }
+      groupsMap.get(key).urls.push(issue.url);
+    });
+
+    const severityWeight = { critical: 3, warning: 2, info: 1 };
+    return Array.from(groupsMap.values()).sort((a, b) => {
+      const diff = (severityWeight[b.type] || 0) - (severityWeight[a.type] || 0);
+      if (diff !== 0) return diff;
+      return b.urls.length - a.urls.length;
+    });
+  }, [filteredIssues]);
+
+  // Dynamic counts responding to active filters
+  const getPillarCount = (pillarKey) => {
+    return issues.filter(iss => {
+      if (pillarKey !== 'all' && iss.pillar !== pillarKey) return false;
+      if (selectedSeverity !== 'all' && iss.type !== selectedSeverity) return false;
+      if (searchTerm.trim()) {
+        const q = searchTerm.toLowerCase();
+        const matchUrl = iss.url?.toLowerCase().includes(q);
+        const matchMsg = iss.message?.toLowerCase().includes(q);
+        const matchCat = iss.category?.toLowerCase().includes(q);
+        if (!matchUrl && !matchMsg && !matchCat) return false;
+      }
+      return true;
+    }).length;
+  };
+
+  const getSeverityCount = (sevType) => {
+    return issues.filter(iss => {
+      if (selectedPillar !== 'all' && iss.pillar !== selectedPillar) return false;
+      if (sevType !== 'all' && iss.type !== sevType) return false;
+      if (searchTerm.trim()) {
+        const q = searchTerm.toLowerCase();
+        const matchUrl = iss.url?.toLowerCase().includes(q);
+        const matchMsg = iss.message?.toLowerCase().includes(q);
+        const matchCat = iss.category?.toLowerCase().includes(q);
+        if (!matchUrl && !matchMsg && !matchCat) return false;
+      }
+      return true;
+    }).length;
+  };
+
+  const toggleGroup = (key) => {
+    setExpandedGroups(prev => ({ ...prev, [key]: !prev[key] }));
+  };
+
+  const toggleAllGroups = (expand) => {
+    if (!expand) {
+      setExpandedGroups({});
+    } else {
+      const all = {};
+      groupedIssues.forEach(g => { all[g.key] = true; });
+      setExpandedGroups(all);
     }
-    return true;
-  });
+  };
 
   const overallColor = overallScore >= 80 ? 'var(--accent-emerald)' : overallScore >= 60 ? 'var(--accent-amber)' : 'var(--accent-red)';
   const seoColor = seoScore >= 80 ? 'var(--accent-emerald)' : seoScore >= 60 ? 'var(--accent-amber)' : 'var(--accent-red)';
@@ -374,48 +457,102 @@ export default function SeoAuditTab({
 
       {/* Findings Section */}
       <div className="glass-panel" style={{ padding: '1.25rem' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.1rem', flexWrap: 'wrap', gap: '0.8rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-            <FileSearch size={18} style={{ color: 'var(--primary)' }} />
-            <h3 style={{ fontSize: '1.02rem', fontWeight: 650 }}>
-              Audit Findings ({filteredIssues.length} of {issues.length})
-            </h3>
+        {/* Findings Header & View Switcher Toolbar */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.85rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem', flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.55rem' }}>
+              <FileSearch size={18} style={{ color: 'var(--primary)' }} />
+              <h3 style={{ fontSize: '1.02rem', fontWeight: 650, margin: 0 }}>
+                Audit Findings
+              </h3>
+              <span className="badge badge-muted" style={{ fontSize: '0.74rem' }}>
+                {filteredIssues.length} of {issues.length}
+              </span>
+            </div>
+
+            {/* View Mode Switcher */}
+            <div className="segmented" role="tablist" aria-label="Audit findings view mode">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={viewMode === 'grouped'}
+                className={viewMode === 'grouped' ? 'active' : ''}
+                onClick={() => setViewMode('grouped')}
+                title="Group findings by issue type (Site-wide Action Items)"
+              >
+                <Layers size={13} />
+                <span>Group by Issue</span>
+                <span className="count">{groupedIssues.length}</span>
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={viewMode === 'list'}
+                className={viewMode === 'list' ? 'active' : ''}
+                onClick={() => setViewMode('list')}
+                title="View flat list of findings by URL"
+              >
+                <ListFilter size={13} />
+                <span>By URL</span>
+                <span className="count">{filteredIssues.length}</span>
+              </button>
+            </div>
           </div>
 
-          {/* Search bar */}
-          <div className="search-bar" style={{ maxWidth: '280px', flex: '1 1 200px' }}>
-            <Search size={14} className="search-icon" />
+          {/* Search bar inside url-input-box for perfect flex centering */}
+          <div
+            className="url-input-box"
+            style={{
+              maxWidth: '300px',
+              flex: '1 1 210px',
+              minHeight: '36px',
+              height: '36px',
+              padding: '0 0.75rem',
+              gap: '0.5rem',
+              borderRadius: 'var(--radius-md)'
+            }}
+          >
+            <Search size={14} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
             <input
-              type="text"
+              type="search"
+              className="url-input-field"
               placeholder="Filter by keyword or URL..."
               value={searchTerm}
               onChange={(e) => {
                 setSearchTerm(e.target.value);
                 setVisibleIssues(ISSUE_PAGE_SIZE);
               }}
-              style={{ width: '100%', fontSize: '0.82rem' }}
+              style={{ fontSize: '0.84rem', padding: '0.2rem 0' }}
             />
+            {searchTerm && (
+              <button
+                type="button"
+                className="clear-input-btn"
+                onClick={() => setSearchTerm('')}
+                title="Clear search"
+                style={{ padding: 0, display: 'flex', alignItems: 'center' }}
+              >
+                <X size={14} />
+              </button>
+            )}
           </div>
         </div>
 
         {/* Filter Toolbars */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem', marginBottom: '1.1rem' }}>
-          {/* Pillar Filter Tabs */}
-          <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem', marginBottom: '1.15rem' }}>
+          {/* Pillar Filter Tabs with Dynamic Counts */}
+          <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap' }}>
             {Object.entries(PILLAR_CONFIG).map(([key, config]) => {
               const Icon = config.icon;
               const isActive = selectedPillar === key;
-              let count = issues.length;
-              if (key === 'seo') count = issues.filter(i => i.pillar === 'seo').length;
-              if (key === 'aeo') count = issues.filter(i => i.pillar === 'aeo').length;
-              if (key === 'geo') count = issues.filter(i => i.pillar === 'geo').length;
+              const count = getPillarCount(key);
 
               return (
                 <button
                   key={key}
                   type="button"
                   className={`btn ${isActive ? 'btn-primary' : 'btn-secondary'}`}
-                  style={{ fontSize: '0.8rem', padding: '0.35rem 0.75rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}
+                  style={{ fontSize: '0.8rem', padding: '0.35rem 0.75rem', display: 'flex', alignItems: 'center', gap: '0.45rem' }}
                   onClick={() => {
                     setSelectedPillar(key);
                     setVisibleIssues(ISSUE_PAGE_SIZE);
@@ -423,7 +560,7 @@ export default function SeoAuditTab({
                 >
                   <Icon size={14} />
                   <span>{config.label}</span>
-                  <span className="badge" style={{ padding: '0.15rem 0.4rem', fontSize: '0.68rem', background: isActive ? 'rgba(255,255,255,0.2)' : 'var(--surface-hover)' }}>
+                  <span className="badge" style={{ padding: '0.12rem 0.45rem', fontSize: '0.68rem', background: isActive ? 'rgba(255,255,255,0.22)' : 'var(--surface-hover)' }}>
                     {count}
                   </span>
                 </button>
@@ -431,59 +568,121 @@ export default function SeoAuditTab({
             })}
           </div>
 
-          {/* Severity Pills */}
-          <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
-            <button
-              type="button"
-              className={`badge ${selectedSeverity === 'all' ? 'badge-primary' : ''}`}
-              style={{ cursor: 'pointer', padding: '0.3rem 0.65rem' }}
-              onClick={() => {
-                setSelectedSeverity('all');
-                setVisibleIssues(ISSUE_PAGE_SIZE);
-              }}
-            >
-              All Severities ({issues.length})
-            </button>
-            <button
-              type="button"
-              className={`badge badge-400`}
-              style={{ cursor: 'pointer', opacity: selectedSeverity === 'critical' ? 1 : 0.75, outline: selectedSeverity === 'critical' ? '2px solid var(--accent-red)' : 'none', padding: '0.3rem 0.65rem' }}
-              onClick={() => {
-                setSelectedSeverity(s => s === 'critical' ? 'all' : 'critical');
-                setVisibleIssues(ISSUE_PAGE_SIZE);
-              }}
-            >
-              <XCircle size={12} />
-              <span>{criticalCount} Critical</span>
-            </button>
-            <button
-              type="button"
-              className={`badge badge-warn`}
-              style={{ cursor: 'pointer', opacity: selectedSeverity === 'warning' ? 1 : 0.75, outline: selectedSeverity === 'warning' ? '2px solid var(--accent-amber)' : 'none', padding: '0.3rem 0.65rem' }}
-              onClick={() => {
-                setSelectedSeverity(s => s === 'warning' ? 'all' : 'warning');
-                setVisibleIssues(ISSUE_PAGE_SIZE);
-              }}
-            >
-              <AlertTriangle size={12} />
-              <span>{warningCount} Warnings</span>
-            </button>
-            <button
-              type="button"
-              className={`badge badge-300`}
-              style={{ cursor: 'pointer', opacity: selectedSeverity === 'info' ? 1 : 0.75, outline: selectedSeverity === 'info' ? '2px solid var(--accent-cyan)' : 'none', padding: '0.3rem 0.65rem' }}
-              onClick={() => {
-                setSelectedSeverity(s => s === 'info' ? 'all' : 'info');
-                setVisibleIssues(ISSUE_PAGE_SIZE);
-              }}
-            >
-              <Info size={12} />
-              <span>{infoCount} Recommendations</span>
-            </button>
+          {/* Severity Pills with Synchronized Counts & High-Contrast Active States */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
+            <div style={{ display: 'flex', gap: '0.45rem', flexWrap: 'wrap', alignItems: 'center' }}>
+              <button
+                type="button"
+                className={`badge ${selectedSeverity === 'all' ? 'badge-primary' : 'badge-muted'}`}
+                style={{
+                  cursor: 'pointer',
+                  padding: '0.32rem 0.7rem',
+                  fontSize: '0.78rem',
+                  transition: 'all 0.15s ease',
+                  border: selectedSeverity === 'all' ? '1.5px solid var(--primary)' : '1.5px solid transparent'
+                }}
+                onClick={() => {
+                  setSelectedSeverity('all');
+                  setVisibleIssues(ISSUE_PAGE_SIZE);
+                }}
+              >
+                All Severities ({getSeverityCount('all')})
+              </button>
+
+              <button
+                type="button"
+                className="badge badge-400"
+                style={{
+                  cursor: 'pointer',
+                  padding: '0.32rem 0.7rem',
+                  fontSize: '0.78rem',
+                  transition: 'all 0.15s ease',
+                  border: selectedSeverity === 'critical' ? '1.5px solid var(--accent-red)' : '1.5px solid transparent',
+                  boxShadow: selectedSeverity === 'critical' ? '0 0 0 2px var(--danger-soft)' : 'none',
+                  opacity: selectedSeverity === 'all' || selectedSeverity === 'critical' ? 1 : 0.65,
+                  fontWeight: selectedSeverity === 'critical' ? 700 : 600
+                }}
+                onClick={() => {
+                  setSelectedSeverity(s => s === 'critical' ? 'all' : 'critical');
+                  setVisibleIssues(ISSUE_PAGE_SIZE);
+                }}
+              >
+                <XCircle size={13} />
+                <span>{getSeverityCount('critical')} Critical</span>
+              </button>
+
+              <button
+                type="button"
+                className="badge badge-warn"
+                style={{
+                  cursor: 'pointer',
+                  padding: '0.32rem 0.7rem',
+                  fontSize: '0.78rem',
+                  transition: 'all 0.15s ease',
+                  border: selectedSeverity === 'warning' ? '1.5px solid var(--accent-amber)' : '1.5px solid transparent',
+                  boxShadow: selectedSeverity === 'warning' ? '0 0 0 2px var(--warning-soft)' : 'none',
+                  opacity: selectedSeverity === 'all' || selectedSeverity === 'warning' ? 1 : 0.65,
+                  fontWeight: selectedSeverity === 'warning' ? 700 : 600
+                }}
+                onClick={() => {
+                  setSelectedSeverity(s => s === 'warning' ? 'all' : 'warning');
+                  setVisibleIssues(ISSUE_PAGE_SIZE);
+                }}
+              >
+                <AlertTriangle size={13} />
+                <span>{getSeverityCount('warning')} Warnings</span>
+              </button>
+
+              <button
+                type="button"
+                className="badge badge-300"
+                style={{
+                  cursor: 'pointer',
+                  padding: '0.32rem 0.7rem',
+                  fontSize: '0.78rem',
+                  transition: 'all 0.15s ease',
+                  border: selectedSeverity === 'info' ? '1.5px solid var(--accent-cyan)' : '1.5px solid transparent',
+                  boxShadow: selectedSeverity === 'info' ? '0 0 0 2px var(--info-soft)' : 'none',
+                  opacity: selectedSeverity === 'all' || selectedSeverity === 'info' ? 1 : 0.65,
+                  fontWeight: selectedSeverity === 'info' ? 700 : 600
+                }}
+                onClick={() => {
+                  setSelectedSeverity(s => s === 'info' ? 'all' : 'info');
+                  setVisibleIssues(ISSUE_PAGE_SIZE);
+                }}
+              >
+                <Info size={13} />
+                <span>{getSeverityCount('info')} Recommendations</span>
+              </button>
+            </div>
+
+            {/* Quick Expand / Collapse All when in Grouped view */}
+            {viewMode === 'grouped' && groupedIssues.length > 0 && (
+              <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  style={{ padding: '0.2rem 0.55rem', fontSize: '0.74rem' }}
+                  onClick={() => toggleAllGroups(true)}
+                  title="Expand all issue groups"
+                >
+                  Expand all
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  style={{ padding: '0.2rem 0.55rem', fontSize: '0.74rem' }}
+                  onClick={() => toggleAllGroups(false)}
+                  title="Collapse all issue groups"
+                >
+                  Collapse all
+                </button>
+              </div>
+            )}
           </div>
         </div>
 
-        {/* Findings List */}
+        {/* Empty State */}
         {filteredIssues.length === 0 ? (
           <div className="empty-state" style={{ padding: '2.5rem 1rem' }}>
             <div className="empty-state-icon" style={{ color: 'var(--accent-emerald)', background: 'var(--success-soft)' }}>
@@ -496,7 +695,120 @@ export default function SeoAuditTab({
                 : 'All pages passed every audit check for this criteria!'}
             </span>
           </div>
+        ) : viewMode === 'grouped' ? (
+          /* View 1: Grouped by Issue Type (Action Items) */
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
+            {groupedIssues.slice(0, visibleIssues).map((group) => {
+              const isExpanded = !!expandedGroups[group.key];
+              const pillarBadgeColor = group.pillar === 'seo' ? 'var(--accent-cyan)' : group.pillar === 'aeo' ? 'var(--accent-purple)' : 'var(--accent-emerald)';
+              const pillarBadgeBg = group.pillar === 'seo' ? 'var(--info-soft)' : group.pillar === 'aeo' ? 'var(--violet-soft)' : 'var(--success-soft)';
+              const isCopied = copiedGroupKey === group.key;
+
+              return (
+                <div key={group.key} className={`issue-group-card ${group.type}`}>
+                  <div
+                    className="issue-group-header"
+                    onClick={() => toggleGroup(group.key)}
+                  >
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem', minWidth: 0, flex: 1 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                        <span className="badge" style={{ background: pillarBadgeBg, color: pillarBadgeColor, textTransform: 'uppercase', fontWeight: 700, fontSize: '0.68rem', letterSpacing: '0.04em' }}>
+                          {group.pillar.toUpperCase()}
+                        </span>
+                        <span className={`badge ${(SEVERITY_STYLES[group.type] || SEVERITY_STYLES.warning).className}`} style={{ fontSize: '0.72rem' }}>
+                          {group.category}
+                        </span>
+                        <span style={{ fontWeight: 650, fontSize: '0.94rem', color: 'var(--text-primary)' }}>
+                          {group.message}
+                        </span>
+                        <span className="badge badge-muted" style={{ fontSize: '0.72rem', marginLeft: 'auto' }}>
+                          {group.urls.length} {group.urls.length === 1 ? 'page affected' : 'pages affected'}
+                        </span>
+                      </div>
+
+                      <div style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', lineHeight: 1.4, display: 'flex', alignItems: 'flex-start', gap: '0.4rem', marginTop: '0.1rem' }}>
+                        <ArrowRight size={13} style={{ flexShrink: 0, marginTop: '3px', color: 'var(--primary)' }} />
+                        <span>{group.recommendation}</span>
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', flexShrink: 0, marginLeft: '0.75rem' }}>
+                      <button
+                        type="button"
+                        className="icon-btn"
+                        style={{ width: '28px', height: '28px' }}
+                        aria-label={isExpanded ? 'Collapse' : 'Expand'}
+                      >
+                        {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                      </button>
+                    </div>
+                  </div>
+
+                  {isExpanded && (
+                    <div className="issue-group-body">
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem' }}>
+                        <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-secondary)' }}>
+                          Affected Pages ({group.urls.length}):
+                        </span>
+                        <button
+                          type="button"
+                          className="btn btn-secondary"
+                          style={{ padding: '0.25rem 0.6rem', fontSize: '0.74rem' }}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            navigator.clipboard.writeText(group.urls.join('\n'));
+                            setCopiedGroupKey(group.key);
+                            setTimeout(() => setCopiedGroupKey(null), 2000);
+                            if (addToast) addToast(`Copied ${group.urls.length} URLs to clipboard!`, 'success');
+                          }}
+                        >
+                          {isCopied ? <Check size={12} style={{ color: 'var(--accent-emerald)' }} /> : <Copy size={12} />}
+                          <span>{isCopied ? 'Copied!' : 'Copy All URLs'}</span>
+                        </button>
+                      </div>
+
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', maxHeight: '320px', overflowY: 'auto' }}>
+                        {group.urls.map((url, uIdx) => {
+                          const matchedPage = pages.find(p => p.url === url);
+                          return (
+                            <div key={`${url}-${uIdx}`} className="issue-url-item">
+                              <span style={{ fontSize: '0.8rem', fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                {url}
+                              </span>
+                              <button
+                                type="button"
+                                className="btn btn-secondary"
+                                style={{ padding: '0.25rem 0.6rem', fontSize: '0.75rem', flexShrink: 0 }}
+                                onClick={() => {
+                                  if (matchedPage && onInspectUrl) onInspectUrl(matchedPage);
+                                }}
+                              >
+                                <Eye size={13} />
+                                <span>Inspect</span>
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+
+            {groupedIssues.length > visibleIssues && (
+              <button
+                type="button"
+                className="btn btn-secondary"
+                style={{ alignSelf: 'center', marginTop: '0.5rem' }}
+                onClick={() => setVisibleIssues(v => v + ISSUE_PAGE_SIZE)}
+              >
+                Show more issues ({groupedIssues.length - visibleIssues} remaining)
+              </button>
+            )}
+          </div>
         ) : (
+          /* View 2: Flat List by URL */
           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
             {filteredIssues.slice(0, visibleIssues).map((issue, idx) => {
               const pillarBadgeColor = issue.pillar === 'seo' ? 'var(--accent-cyan)' : issue.pillar === 'aeo' ? 'var(--accent-purple)' : 'var(--accent-emerald)';
