@@ -102,26 +102,42 @@ export function extractPageMetadata(fetchResult, url, depth = 1, hostname = '') 
   if (metaDescTag) metaDescTag = decodeHtmlEntities(metaDescTag);
 
   // 3. Headings H1, H2, H3 (DOMParser + Regex fallback)
-  let h1Elements = doc ? Array.from(doc.querySelectorAll('h1')).map(el => el.textContent.trim()).filter(Boolean) : [];
+  // Strips any inline images, markdown image links, or tags embedded inside headings
+  const sanitizeHeadingText = (text) => {
+    if (!text) return '';
+    return decodeHtmlEntities(text)
+      .replace(/!\[.*?\]\(.*?\)/g, '')
+      .replace(/<[^>]+>/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  };
+
+  let h1Elements = doc ? Array.from(doc.querySelectorAll('h1')).map(el => sanitizeHeadingText(el.textContent)).filter(Boolean) : [];
   if (h1Elements.length === 0) {
     h1Elements = [...rawHtml.matchAll(/<h1[^>]*>([\s\S]*?)<\/h1>/gi)]
-      .map(m => decodeHtmlEntities(m[1].replace(/<[^>]+>/g, '')))
+      .map(m => sanitizeHeadingText(m[1]))
       .filter(Boolean);
   }
-  const rawH1 = h1Elements[0] || rawHtml.match(/^#\s+(.+)$/im)?.[1]?.trim() || '';
+  let rawH1 = h1Elements[0] || '';
+  if (!rawH1) {
+    const mdMatch = rawHtml.match(/^#\s+(.+)$/im);
+    if (mdMatch) {
+      rawH1 = sanitizeHeadingText(mdMatch[1]);
+    }
+  }
   const h1Count = h1Elements.length || (rawH1 ? 1 : 0);
 
-  let h2Elements = doc ? Array.from(doc.querySelectorAll('h2')).map(el => el.textContent.trim()).filter(Boolean) : [];
+  let h2Elements = doc ? Array.from(doc.querySelectorAll('h2')).map(el => sanitizeHeadingText(el.textContent)).filter(Boolean) : [];
   if (h2Elements.length === 0) {
     h2Elements = [...rawHtml.matchAll(/<h2[^>]*>([\s\S]*?)<\/h2>/gi)]
-      .map(m => decodeHtmlEntities(m[1].replace(/<[^>]+>/g, '')))
+      .map(m => sanitizeHeadingText(m[1]))
       .filter(Boolean);
   }
 
-  let h3Elements = doc ? Array.from(doc.querySelectorAll('h3')).map(el => el.textContent.trim()).filter(Boolean) : [];
+  let h3Elements = doc ? Array.from(doc.querySelectorAll('h3')).map(el => sanitizeHeadingText(el.textContent)).filter(Boolean) : [];
   if (h3Elements.length === 0) {
     h3Elements = [...rawHtml.matchAll(/<h3[^>]*>([\s\S]*?)<\/h3>/gi)]
-      .map(m => decodeHtmlEntities(m[1].replace(/<[^>]+>/g, '')))
+      .map(m => sanitizeHeadingText(m[1]))
       .filter(Boolean);
   }
   const allHeadings = [...h2Elements, ...h3Elements];
@@ -265,30 +281,51 @@ export function extractPageMetadata(fetchResult, url, depth = 1, hostname = '') 
   const statMatches = bodyText.match(/\b\d+(\.\d+)?%|\$\d+(\.\d+)?|\b(19\d\d|20\d\d)\b|\b\d{2,}(,\d{3})+\b/g) || [];
   const statDensity = statMatches.length;
 
-  // 11. Images & Alt attributes
-  const rawImages = doc ? Array.from(doc.querySelectorAll('img')) : [];
+  // 11. Images & Alt attributes (DOMParser + Regex fallback)
   const images = [];
   const imagesWithoutAlt = [];
-  rawImages.forEach(img => {
-    const src = img.getAttribute('src') || img.getAttribute('data-src');
-    if (!src || src.startsWith('data:') || src.startsWith('blob:')) return;
-    try {
-      const abs = new URL(src, url).href;
-      if (!images.includes(abs) && images.length < 30) images.push(abs);
-      const alt = img.getAttribute('alt');
-      if (alt === null || alt.trim() === '') {
-        if (!imagesWithoutAlt.includes(abs) && imagesWithoutAlt.length < 20) {
-          imagesWithoutAlt.push(abs);
+  if (doc) {
+    const rawImages = Array.from(doc.querySelectorAll('img'));
+    rawImages.forEach(img => {
+      const src = img.getAttribute('src') || img.getAttribute('data-src');
+      if (!src || src.startsWith('data:') || src.startsWith('blob:')) return;
+      try {
+        const abs = new URL(src, url).href;
+        if (!images.includes(abs) && images.length < 30) images.push(abs);
+        const alt = img.getAttribute('alt');
+        if (alt === null || alt.trim() === '') {
+          if (!imagesWithoutAlt.includes(abs) && imagesWithoutAlt.length < 20) {
+            imagesWithoutAlt.push(abs);
+          }
         }
-      }
-    } catch (e) {}
-  });
+      } catch (e) {}
+    });
+  } else if (rawHtml) {
+    const imgMatches = [...rawHtml.matchAll(/<img\s+[^>]*>/gi)];
+    for (const m of imgMatches) {
+      const tag = m[0];
+      const srcMatch = tag.match(/(?:src|data-src)=(["'])([\s\S]*?)\1/i);
+      if (!srcMatch) continue;
+      const src = srcMatch[2].trim();
+      if (!src || src.startsWith('data:') || src.startsWith('blob:')) continue;
+      try {
+        const abs = new URL(src, url).href;
+        if (!images.includes(abs) && images.length < 30) images.push(abs);
+        const altMatch = tag.match(/alt=(["'])([\s\S]*?)\1/i);
+        if (!altMatch || !altMatch[2].trim()) {
+          if (!imagesWithoutAlt.includes(abs) && imagesWithoutAlt.length < 20) {
+            imagesWithoutAlt.push(abs);
+          }
+        }
+      } catch (e) {}
+    }
+  }
 
   // 12. External links for citations (GEO Signal)
   const externalLinks = [];
-  if (doc) {
-    try {
-      const currentHost = new URL(url).hostname;
+  try {
+    const currentHost = new URL(url).hostname;
+    if (doc) {
       doc.querySelectorAll('a[href^="http"]').forEach(a => {
         try {
           const href = a.getAttribute('href');
@@ -300,15 +337,47 @@ export function extractPageMetadata(fetchResult, url, depth = 1, hostname = '') 
           }
         } catch (e) {}
       });
-    } catch (e) {}
-  }
+    } else if (rawHtml) {
+      const aMatches = [...rawHtml.matchAll(/<a\s+[^>]*href=["'](https?:\/\/[^"']+)["']/gi)];
+      for (const m of aMatches) {
+        try {
+          const href = m[1];
+          const extHost = new URL(href).hostname;
+          if (extHost && extHost !== currentHost && !extHost.endsWith('.' + currentHost)) {
+            if (!externalLinks.includes(href) && externalLinks.length < 20) {
+              externalLinks.push(href);
+            }
+          }
+        } catch (e) {}
+      }
+    }
+  } catch (e) {}
 
-  // 13. Mobile & OpenGraph
-  const hasViewport = !!doc?.querySelector('meta[name="viewport"]');
-  const ogTitle = doc?.querySelector('meta[property="og:title"]')?.getAttribute('content')?.trim() || '';
-  const ogDescription = doc?.querySelector('meta[property="og:description"]')?.getAttribute('content')?.trim() || '';
-  const ogImage = doc?.querySelector('meta[property="og:image"]')?.getAttribute('content')?.trim() || '';
-  const twitterCard = doc?.querySelector('meta[name="twitter:card"]')?.getAttribute('content')?.trim() || '';
+  // 13. Mobile & OpenGraph (DOMParser + Regex fallback)
+  let hasViewport = !!doc?.querySelector('meta[name="viewport"]');
+  if (!hasViewport && rawHtml) {
+    hasViewport = /<meta\s+[^>]*name=["']viewport["']/i.test(rawHtml);
+  }
+  let ogTitle = doc?.querySelector('meta[property="og:title" i]')?.getAttribute('content')?.trim() || '';
+  if (!ogTitle && rawHtml) {
+    const m = rawHtml.match(/<meta\s+[^>]*property=["']og:title["'][^>]*content=(["'])([\s\S]*?)\1/i);
+    if (m) ogTitle = decodeHtmlEntities(m[2].trim());
+  }
+  let ogDescription = doc?.querySelector('meta[property="og:description" i]')?.getAttribute('content')?.trim() || '';
+  if (!ogDescription && rawHtml) {
+    const m = rawHtml.match(/<meta\s+[^>]*property=["']og:description["'][^>]*content=(["'])([\s\S]*?)\1/i);
+    if (m) ogDescription = decodeHtmlEntities(m[2].trim());
+  }
+  let ogImage = doc?.querySelector('meta[property="og:image" i]')?.getAttribute('content')?.trim() || '';
+  if (!ogImage && rawHtml) {
+    const m = rawHtml.match(/<meta\s+[^>]*property=["']og:image["'][^>]*content=(["'])([\s\S]*?)\1/i);
+    if (m) ogImage = m[2].trim();
+  }
+  let twitterCard = doc?.querySelector('meta[name="twitter:card" i]')?.getAttribute('content')?.trim() || '';
+  if (!twitterCard && rawHtml) {
+    const m = rawHtml.match(/<meta\s+[^>]*name=["']twitter:card["'][^>]*content=(["'])([\s\S]*?)\1/i);
+    if (m) twitterCard = m[2].trim();
+  }
 
   return {
     url,
@@ -682,7 +751,7 @@ export class ClientCrawler {
     // 1. Local Vite dev server proxy (active on localhost or preview port)
     if (isLocalEnvironment()) {
       try {
-        const probeRes = await this.tryFetchEndpoint(this.devProxyUrl(testUrl), {}, 3000);
+        const probeRes = await this.tryFetchEndpoint(this.devProxyUrl(testUrl), {}, 8000);
         if (probeRes && probeRes.ok) {
           const text = await probeRes.text();
           if (isValidHtmlResponse(text, probeRes.status)) {
@@ -691,22 +760,25 @@ export class ClientCrawler {
           }
         }
       } catch (e) {}
+      // Dev proxy is always available on localhost / local preview network
+      this.preferredProxy = { type: 'dev' };
+      return this.preferredProxy;
     }
 
     // 2. Direct fetch (works if target site sets Access-Control-Allow-Origin: *)
     try {
-      const dirRes = await this.tryFetchEndpoint(testUrl, {}, 1200);
+      const dirRes = await this.tryFetchEndpoint(testUrl, {}, 1500);
       if (dirRes && dirRes.ok) {
         this.preferredProxy = { type: 'direct' };
         return this.preferredProxy;
       }
     } catch (e) {}
 
-    // 3. Probe CORS Proxy Fleet (Jina HTML, AllOrigins, Jina MD)
+    // 3. Probe CORS Proxy Fleet (HTML proxies ONLY - zero markdown degradation)
     if (this.useCorsProxy) {
       // Probe Jina HTML (fastest and cleanest DOM proxy)
       try {
-        const probe = await this.tryFetchEndpoint(`https://r.jina.ai/${testUrl}`, JINA_TURBO_HEADERS, 4000);
+        const probe = await this.tryFetchEndpoint(`https://r.jina.ai/${testUrl}`, JINA_TURBO_HEADERS, 5000);
         if (probe && probe.ok) {
           const text = await probe.text();
           if (isValidHtmlResponse(text, probe.status)) {
@@ -718,7 +790,7 @@ export class ClientCrawler {
 
       // Probe AllOrigins JSON Gateway
       try {
-        const probe = await this.tryFetchEndpoint(`https://api.allorigins.win/get?url=${encodeURIComponent(testUrl)}`, {}, 4000);
+        const probe = await this.tryFetchEndpoint(`https://api.allorigins.win/get?url=${encodeURIComponent(testUrl)}`, {}, 5000);
         if (probe && probe.ok) {
           const json = await probe.json();
           if (json && isValidHtmlResponse(json.contents, json.status?.http_code || 200)) {
@@ -737,13 +809,14 @@ export class ClientCrawler {
   }
 
   // Universal multi-tier fetch pipeline:
-  // Session Cache -> Preferred Proxy -> Custom User Proxy -> Dev Proxy (localhost only) -> Direct Fetch -> Jina HTML -> AllOrigins -> Jina MD
+  // Session Cache -> Preferred Proxy -> Local Dev Proxy -> Direct Fetch -> Jina HTML -> AllOrigins -> CorsProxy.io
   async fetchPageHtml(url) {
     if (this.cache.has(url)) {
       return this.cache.get(url);
     }
 
     const startTime = performance.now();
+    const isLocal = isLocalEnvironment();
 
     // 0. Preferred proxy from pre-flight probe or earlier successful step
     if (this.preferredProxy) {
@@ -753,17 +826,18 @@ export class ClientCrawler {
           this.consecutiveProxyFailures = 0;
           this.cache.set(url, cachedRes);
           return cachedRes;
-        } else {
+        } else if (!isLocal) {
           this.consecutiveProxyFailures = (this.consecutiveProxyFailures || 0) + 1;
-          // Only switch away from preferred proxy after 3 consecutive failures
           if (this.consecutiveProxyFailures >= 3) {
             this.preferredProxy = null;
           }
         }
       } catch (e) {
-        this.consecutiveProxyFailures = (this.consecutiveProxyFailures || 0) + 1;
-        if (this.consecutiveProxyFailures >= 3) {
-          this.preferredProxy = null;
+        if (!isLocal) {
+          this.consecutiveProxyFailures = (this.consecutiveProxyFailures || 0) + 1;
+          if (this.consecutiveProxyFailures >= 3) {
+            this.preferredProxy = null;
+          }
         }
       }
     }
@@ -774,7 +848,7 @@ export class ClientCrawler {
         const customUrl = this.customCorsProxy.includes('${url}')
           ? this.customCorsProxy.replace('${url}', encodeURIComponent(url))
           : `${this.customCorsProxy}${encodeURIComponent(url)}`;
-        const resp = await this.tryFetchEndpoint(customUrl, {}, 8000);
+        const resp = await this.tryFetchEndpoint(customUrl, {}, 10000);
         if (resp && resp.ok) {
           const html = await resp.text();
           if (html && html.length > 30) {
@@ -788,11 +862,11 @@ export class ClientCrawler {
       } catch (e) {}
     }
 
-    // 2. Built-in local dev proxy endpoint (ONLY on localhost dev server)
-    if (isLocalEnvironment()) {
+    // 2. Built-in local dev proxy endpoint (active in local dev & preview server)
+    if (isLocal) {
       try {
         const devProxyUrl = this.devProxyUrl(url);
-        const resp = await this.tryFetchEndpoint(devProxyUrl, {}, 10000);
+        const resp = await this.tryFetchEndpoint(devProxyUrl, {}, 15000);
         // Treat 200, 301, 404, 403 as valid upstream responses (only 502/504 indicates proxy connection failure)
         if (resp && resp.status !== 502 && resp.status !== 504) {
           const html = await resp.text();
@@ -820,7 +894,7 @@ export class ClientCrawler {
       }
     } catch (e) {}
 
-    // 4. Public CORS Proxy Fleet (when CORS proxy fallback is enabled)
+    // 4. Public CORS Proxy Fleet (HTML ONLY - zero markdown degradation)
     if (this.useCorsProxy) {
       // Tier A: Jina Reader Turbo HTML mode
       try {
@@ -854,16 +928,32 @@ export class ClientCrawler {
         }
       } catch (e) {}
 
-      // Tier C: Jina Reader Markdown mode
+      // Tier C: Corsproxy.io Raw HTML Gateway
       try {
-        const jinaUrl = `https://r.jina.ai/${url}`;
-        const resp = await this.tryFetchEndpoint(jinaUrl, {}, 7000);
+        const corsProxyUrl = `https://corsproxy.io/?url=${encodeURIComponent(url)}`;
+        const resp = await this.tryFetchEndpoint(corsProxyUrl, {}, 7000);
         if (resp && resp.ok) {
-          const text = await resp.text();
-          if (isValidHtmlResponse(text, resp.status)) {
+          const html = await resp.text();
+          if (isValidHtmlResponse(html, resp.status)) {
             const latency = Math.round(performance.now() - startTime);
-            this.preferredProxy = { type: 'jina_md' };
-            const res = { ok: true, status: 200, latency, html: text, isMarkdown: true, proxyName: 'Jina Engine (Markdown)' };
+            this.preferredProxy = { type: 'corsproxy_io' };
+            const res = { ok: true, status: 200, latency, html, proxyName: 'CorsProxy.io' };
+            this.cache.set(url, res);
+            return res;
+          }
+        }
+      } catch (e) {}
+
+      // Tier D: CodeTabs Proxy Gateway
+      try {
+        const codeTabsUrl = `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`;
+        const resp = await this.tryFetchEndpoint(codeTabsUrl, {}, 7000);
+        if (resp && resp.ok) {
+          const html = await resp.text();
+          if (isValidHtmlResponse(html, resp.status)) {
+            const latency = Math.round(performance.now() - startTime);
+            this.preferredProxy = { type: 'codetabs' };
+            const res = { ok: true, status: 200, latency, html, proxyName: 'CodeTabs Gateway' };
             this.cache.set(url, res);
             return res;
           }
@@ -925,7 +1015,7 @@ export class ClientCrawler {
       }
     } else if (pref.type === 'dev') {
       const devProxyUrl = this.devProxyUrl(url);
-      const resp = await this.tryFetchEndpoint(devProxyUrl, {}, 10000);
+      const resp = await this.tryFetchEndpoint(devProxyUrl, {}, 15000);
       if (resp && resp.status !== 502 && resp.status !== 504) {
         const html = await resp.text();
         if (isValidHtmlResponse(html, resp.status)) {
@@ -954,12 +1044,20 @@ export class ClientCrawler {
           return { ok: true, status: json.status?.http_code || 200, latency: Math.round(performance.now() - startTime), html: json.contents, proxyName: 'AllOrigins Gateway' };
         }
       }
-    } else if (pref.type === 'jina_md') {
-      const resp = await this.tryFetchEndpoint(`https://r.jina.ai/${url}`, {}, 7000);
+    } else if (pref.type === 'corsproxy_io') {
+      const resp = await this.tryFetchEndpoint(`https://corsproxy.io/?url=${encodeURIComponent(url)}`, {}, 7000);
       if (resp && resp.ok) {
-        const text = await resp.text();
-        if (isValidHtmlResponse(text, resp.status)) {
-          return { ok: true, status: 200, latency: Math.round(performance.now() - startTime), html: text, isMarkdown: true, proxyName: 'Jina Engine (Markdown)' };
+        const html = await resp.text();
+        if (isValidHtmlResponse(html, resp.status)) {
+          return { ok: true, status: 200, latency: Math.round(performance.now() - startTime), html, proxyName: 'CorsProxy.io' };
+        }
+      }
+    } else if (pref.type === 'codetabs') {
+      const resp = await this.tryFetchEndpoint(`https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}`, {}, 7000);
+      if (resp && resp.ok) {
+        const html = await resp.text();
+        if (isValidHtmlResponse(html, resp.status)) {
+          return { ok: true, status: 200, latency: Math.round(performance.now() - startTime), html, proxyName: 'CodeTabs Gateway' };
         }
       }
     }

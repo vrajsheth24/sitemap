@@ -25,7 +25,7 @@ function devProxyPlugin() {
 
     try {
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 12000);
+      const timer = setTimeout(() => controller.abort(), 15000);
 
       const upstreamRes = await fetch(target, {
         method: 'GET',
